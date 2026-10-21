@@ -353,6 +353,7 @@ namespace ingame
         std::atomic_uint observed_deaths{0};
         FunctionHook death_hook;
         std::uint64_t remote_deadline = 0;
+        bool bonus_round_active();
         Address bound_player_died()
         {
             const auto handle = death_handle.load(), variable = resolve(handle);
@@ -362,7 +363,7 @@ namespace ingame
                 return 0;
             return variable;
         }
-        void record_death_change(bool before, bool after)
+        __declspec(noinline) void record_death_change(bool before, bool after, bool bonus)
         {
             if (before == after)
                 return;
@@ -371,7 +372,7 @@ namespace ingame
                 remote_death = false;
                 return;
             }
-            if (!remote_death.exchange(false))
+            if (!remote_death.exchange(false) && !bonus)
                 ++observed_deaths;
         }
         void player_died_set(Address variable, unsigned char requested)
@@ -380,9 +381,11 @@ namespace ingame
                                  !level_key(string(value<Address>(value<Address>(base() + 0x1a64690) + 184))).empty();
             const auto getter = reinterpret_cast<unsigned char (*)(Address)>(base() + 0x4e5c60);
             const bool before = tracked && getter(variable);
+            // respawn callbacks can clear the bonus flag during the original setter
+            const bool bonus = tracked && !before && requested && bonus_round_active();
             reinterpret_cast<void (*)(Address, unsigned char)>(death_hook.original)(variable, requested);
             if (tracked && variable == bound_player_died())
-                record_death_change(before, getter(variable) != 0);
+                record_death_change(before, getter(variable) != 0, bonus);
         }
         bool death_controls_ready(Address actor, bool camera_active)
         {
@@ -609,7 +612,49 @@ namespace ingame
             }
             return false;
         }
-        bool request_scripted_death(Address actor)
+        __declspec(noinline) bool bonus_round_active()
+        {
+            // standard bonus rounds belong to a level manager, not a component on Crash
+            for (const auto owner : event_owners())
+                for (const auto component : list(value<Address>(owner + 24), 128))
+                {
+                    const auto meta = value<Address>(component + 56), data = value<Address>(component + 16);
+                    if (!typed(component, 0x13bbbd0) || value<Address>(component + 24) != owner ||
+                        !(value<unsigned>(component + 32) & 1) || (value<unsigned>(component + 32) & 24) ||
+                        !(value<unsigned char>(component + 40) & 1) || !typed(meta, 0x1745d78) ||
+                        string(value<Address>(meta + 16)) != "Scripts.Graph.common_Basic_BonusRound_Manager" ||
+                        !typed(data, 0x13bbb10))
+                        continue;
+                    const auto dm = value<Address>(data + 32);
+                    if (!dm || dm != value<Address>(meta + 176))
+                        continue;
+                    const auto count = value<unsigned>(dm + 24);
+                    const auto size = value<std::uint16_t>(dm + 90);
+                    const auto fields = value<Address>(dm + 40);
+                    if (!fields || count > 256 || size < 40 || size > 4096)
+                        continue;
+                    for (unsigned i = 0; i < count; ++i)
+                    {
+                        const auto field = value<Address>(fields + i * 8);
+                        if (!typed(field, 0x17a46b8) || string(value<Address>(field + 48)) != "BonusRoundActive_id_esgpg6p3" ||
+                            value<std::uint16_t>(field + 22) != 8)
+                            continue;
+                        const auto offset = value<std::uint16_t>(field + 24);
+                        if (offset < 40 || offset + 8u > size)
+                            return false;
+                        const auto handle = value<Address>(data + offset), variable = resolve(handle);
+                        if ((value<unsigned>(handle) & 0xf0000000) != 0x40000000 ||
+                            string(value<Address>(handle + 8)) != "BonusRoundActive" ||
+                            string(value<Address>(handle + 24)) != "gamevariables" ||
+                            !typed(variable, 0x155ebf0) || value<unsigned>(variable + 16) > 2 ||
+                            !code_matches(0x4e5c60, std::array<unsigned char, 5>{0xe9, 0xab, 0xe9, 0xff, 0xff}))
+                            return false;
+                        return reinterpret_cast<unsigned char (*)(Address)>(base() + 0x4e5c60)(variable) != 0;
+                    }
+                }
+            return false;
+        }
+        __declspec(noinline) bool request_scripted_death(Address actor)
         {
             if (!code_matches(0x767da0, std::array<unsigned char, 16>{0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x57, 0x48,
                                                                       0x83, 0xec, 0x40, 0x48, 0x83, 0x79, 0x10, 0}))

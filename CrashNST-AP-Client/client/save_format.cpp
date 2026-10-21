@@ -4,7 +4,6 @@
 #include <array>
 #include <fstream>
 #include <stdexcept>
-#include <string_view>
 
 namespace save_probe
 {
@@ -20,11 +19,6 @@ namespace save_probe
                    static_cast<std::uint32_t>(data[offset + 1]) << 8 |
                    static_cast<std::uint32_t>(data[offset + 2]) << 16 |
                    static_cast<std::uint32_t>(data[offset + 3]) << 24;
-        }
-
-        bool contains(const std::vector<std::uint8_t> &data, std::string_view marker)
-        {
-            return std::search(data.begin(), data.end(), marker.begin(), marker.end()) != data.end();
         }
     } // namespace
 
@@ -299,43 +293,145 @@ namespace save_probe
                                  length ? length - 1 : 0);
             position += length;
         }
-        if (position != end || !contains(data, std::string_view("CZoneInfoSave", sizeof("CZoneInfoSave"))) ||
-            !contains(data, std::string_view("CZoneInfoUserSession", sizeof("CZoneInfoUserSession"))))
+        if (position != end || u32(data, 12) != 36)
             throw std::runtime_error("Unknown zone record layout");
 
-        std::map<std::pair<std::uint32_t, std::uint32_t>, Zones> groups;
-        // candidate pair: 16-byte CZoneInfoSave followed by a 68-byte CZoneInfoUserSession record
-        for (position = end; position + 84 <= data.size(); ++position)
+        // as in SAVE_OPTIONS, type IDs depend on serialization order
+        std::vector<std::pair<std::size_t, unsigned>> type_names;
+        std::size_t names_end = end;
+        for (const char *name : {"__internalObjectBase", "igObject", "igNamedObject", "igDirEntry", "igObjectDirEntry",
+                                 "igMemoryDirEntry", "igExternalDirEntry", "igExternalIndexedEntry", "igExternalInfoEntry", "igExternalObjectEntry",
+                                 "igContainer", "igDataList", "igObjectList", "igHashTable", "igStringBoolHashTable", "igStringIntHashTable",
+                                 "igReferenceResolver", "igInfo", "igObjectDirectoryIGBInfo", "igNameList", "CGameSaveData", "igInfoList",
+                                 "CDynamicDifficultySaveData", "CZoneInfoSaveList", "CZoneInfoSave", "CZoneInfoUserSession",
+                                 "CGameVariableValueSavedBool", "CGameVariableValueSavedFloatList", "CGameVariableStoreSaveData",
+                                 "CGameVariableValueSavedInt", "CGameVariableValueSavedIntList", "CGameVariableValueSavedBoolList",
+                                 "CGameVariableValueSavedStringList", "CQuestSystemSaveData", "CGameVariableValueSavedFloat", "CQuestTrackSaveDataList"})
         {
-            if (u32(data, position + 4) != 16)
-                continue;
-            const auto name_index = u32(data, position + 8);
-            if (name_index >= strings.size() || strings[name_index].find('/') == std::string::npos)
-                continue;
-            const auto zone_type = u32(data, position);
-            const auto session_type = u32(data, position + 16);
-            // type IDs depend on the serialized graph. CGameSaveData can separate these types.
-            if (session_type == zone_type || u32(data, position + 20) != 68)
-                continue;
-            auto &group = groups[{zone_type, session_type}];
-            // relative to the pair: completions +36, relic rank +68, collectible mask +76
-            const Zone record{u32(data, position + 36), u32(data, position + 68),
-                              u32(data, position + 76)};
-            if (!group.emplace(strings[name_index], record).second)
-                throw std::runtime_error("Duplicate zone record");
+            const std::string marker = std::string(name) + '\0';
+            const auto found = std::search(data.begin() + end, data.end(), marker.begin(), marker.end());
+            if (found == data.end())
+                throw std::runtime_error("Unknown save types");
+            type_names.emplace_back(found - data.begin(), type_names.size());
+            names_end = std::max(names_end, found - data.begin() + marker.size());
         }
-        const Zones *selected = nullptr;
-        for (const auto &[types, group] : groups)
+        std::sort(type_names.begin(), type_names.end());
+        std::array<unsigned, 36> types{};
+        for (unsigned i = 0; i < type_names.size(); ++i)
+            types[type_names[i].second] = i;
+        const auto directory_size = u32(data, 0), template_count = u32(data, 4);
+        if (!template_count || template_count > 128 || directory_size > 4096 || directory_size < template_count * 20)
+            throw std::runtime_error("Unknown save directory");
+        Zones result;
+        for (std::size_t start = names_end; start + directory_size + 12 < data.size(); ++start)
         {
-            if (group.size() < 100)
+            if (!((u32(data, start) == types[4] && u32(data, start + 4) == 20) ||
+                  (u32(data, start) == types[5] && u32(data, start + 4) == 32)))
                 continue;
-            if (selected)
-                throw std::runtime_error("Ambiguous zone records");
-            selected = &group;
+            try
+            {
+                struct Entry
+                {
+                    unsigned type, count, width;
+                    std::size_t at = 0;
+                };
+                std::vector<Entry> templates, entries;
+                auto pos = start;
+                for (unsigned i = 0; i < template_count; ++i)
+                {
+                    const auto kind = u32(data, pos), length = u32(data, pos + 4);
+                    if (u32(data, pos + 8) != 0)
+                        throw std::runtime_error("Invalid directory flags");
+                    if (kind == types[4] && length == 20 && u32(data, pos + 12) > 0 && u32(data, pos + 12) < types.size())
+                        templates.push_back({u32(data, pos + 12), 0, 0});
+                    else if (kind == types[5] && length == 32 && u32(data, pos + 12) <= 4096 &&
+                             (u32(data, pos + 24) == 1 || u32(data, pos + 24) == 4 || u32(data, pos + 24) == 8))
+                    {
+                        const auto field = u32(data, pos + 16);
+                        // object and string references are 32-bit indices on disk.
+                        templates.push_back({0, u32(data, pos + 12), field == 0 || field == 6 ? 4 : u32(data, pos + 24)});
+                    }
+                    else
+                        throw std::runtime_error("Invalid directory entry");
+                    pos += length;
+                }
+                if (pos != start + directory_size)
+                    continue;
+                const auto entry_count = u32(data, pos + 4);
+                if (!entry_count || entry_count > 4096 || u32(data, pos) != 8 + entry_count * 2 ||
+                    pos + 8 + entry_count * 2 + 4 > data.size())
+                    continue;
+                for (unsigned i = 0; i < entry_count; ++i)
+                {
+                    const auto at = pos + 8 + i * 2;
+                    const unsigned index = data[at] | unsigned(data[at + 1]) << 8;
+                    if (index >= templates.size())
+                        throw std::runtime_error("Invalid directory reference");
+                    entries.push_back(templates[index]);
+                }
+                pos += 8 + entry_count * 2;
+                if (u32(data, pos) >= entry_count)
+                    continue;
+                pos += 4;
+                std::size_t list = 0;
+                for (auto &entry : entries)
+                    if (entry.type)
+                    {
+                        const auto length = u32(data, pos + 4);
+                        if (u32(data, pos) != entry.type || length < 8 || length > 4096 || length % 4 || length > data.size() - pos)
+                            throw std::runtime_error("Invalid save object");
+                        entry.at = pos;
+                        if (entry.type == types[23])
+                        {
+                            if (list || length != 20)
+                                throw std::runtime_error("Invalid zone list");
+                            list = pos;
+                        }
+                        pos += length;
+                    }
+                for (auto &entry : entries)
+                    if (!entry.type)
+                    {
+                        const auto length = entry.count * entry.width;
+                        if (pos > data.size() || length > data.size() - pos)
+                            throw std::runtime_error("Truncated save buffer");
+                        entry.at = pos;
+                        pos += length;
+                    }
+                if (pos != data.size() || !list)
+                    continue;
+                const auto zone_count = u32(data, list + 8), buffer = u32(data, list + 16);
+                if (zone_count < 100 || zone_count > u32(data, list + 12) || buffer >= entry_count ||
+                    entries[buffer].type || entries[buffer].width != 4 || entries[buffer].count != u32(data, list + 12))
+                    throw std::runtime_error("Invalid zone list buffer");
+                Zones current;
+                for (unsigned i = 0; i < zone_count; ++i)
+                {
+                    const auto ref = u32(data, entries[buffer].at + i * 4);
+                    if (ref >= entry_count || entries[ref].type != types[24] || u32(data, entries[ref].at + 4) != 16)
+                        throw std::runtime_error("Invalid zone reference");
+                    const auto zone = entries[ref].at;
+                    const auto name = u32(data, zone + 8), session = u32(data, zone + 12);
+                    if (name >= strings.size() || strings[name].find('/') == std::string::npos ||
+                        session >= entry_count || entries[session].type != types[25] || u32(data, entries[session].at + 4) != 68)
+                        throw std::runtime_error("Invalid zone session reference");
+                    // a session can be serialized earlier in the graph, doesnt not have to follow its zone
+                    const auto at = entries[session].at;
+                    if (!current.emplace(strings[name], Zone{u32(data, at + 20), u32(data, at + 52), u32(data, at + 60)}).second)
+                        throw std::runtime_error("Duplicate zone record");
+                }
+                if (!result.empty())
+                    throw std::logic_error("Ambiguous zone records");
+                result = std::move(current);
+            }
+            catch (const std::runtime_error &)
+            {
+                continue;
+            }
         }
-        if (!selected)
+        if (result.empty())
             throw std::runtime_error("Incomplete zone records");
-        return *selected;
+        return result;
     }
 
 } // namespace save_probe

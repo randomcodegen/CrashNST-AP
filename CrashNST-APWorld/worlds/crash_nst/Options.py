@@ -6,6 +6,7 @@ from Options import (
     Choice,
     DefaultOnToggle,
     OptionDict,
+    OptionSet,
     PerGameCommonOptions,
     Range,
     Toggle,
@@ -120,18 +121,39 @@ class Goal(Choice):
     default = option_all_cortex
 
 
-class RequireAllBosses(Toggle):
+class RequireAllBosses(Choice):
     """Require every boss, including Cortex, in the campaigns targeted by the goal.
 
     Applies only to Cortex goals. Required bosses are included even if omitted
     from the level pool. Level-clear and token-hunt goals are unaffected.
+    Cortex Last also locks each goal campaign's Cortex until its other bosses are defeated.
     """
 
     display_name = "Require All Goal Campaign Bosses"
+    option_false = 0
+    option_true = 1
+    option_cortex_last = 2
+    alias_off = 0
+    alias_no = 0
+    alias_on = 1
+    alias_yes = 1
+    default = option_false
+
+
+class CortexRequirements(OptionSet):
+    """Extra requirements before the goal's Cortex entrances unlock.
+
+    Select level_clears, token_hunt, or both. Every selected requirement must
+    be met, then defeat the goal bosses to win. Used only with Cortex goals.
+    """
+
+    display_name = "Cortex Unlock Requirements"
+    valid_keys = {"level_clears", "token_hunt"}
+    default = frozenset()
 
 
 class GoalCount(Range):
-    """Distinct regular levels to clear. Used only for the level-clears goal."""
+    """Distinct regular levels to clear for the level-clears goal or Cortex requirement."""
 
     display_name = "Goal Count"
     range_start = 1
@@ -140,7 +162,7 @@ class GoalCount(Range):
 
 
 class TokenPercentage(Range):
-    """Percentage of filler slots replaced with AP Tokens for token hunt."""
+    """Percentage of filler slots replaced with AP Tokens for token hunt or a Cortex requirement."""
 
     display_name = "Token Hunt Filler Percentage"
     range_start = 1
@@ -149,7 +171,7 @@ class TokenPercentage(Range):
 
 
 class TokenRequiredPercentage(Range):
-    """Percentage of the available AP Tokens required to win."""
+    """Percentage of the available AP Tokens required to win or unlock the goal Cortex bosses."""
 
     display_name = "Token Hunt Required Percentage"
     range_start = 1
@@ -288,6 +310,7 @@ class CrashOptions(PerGameCommonOptions):
     level_access_locks: LevelAccessLocks
     goal: Goal
     require_all_bosses: RequireAllBosses
+    cortex_requirements: CortexRequirements
     goal_count: GoalCount
     token_percentage: TokenPercentage
     token_required_percentage: TokenRequiredPercentage

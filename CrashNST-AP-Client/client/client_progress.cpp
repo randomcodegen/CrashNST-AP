@@ -241,7 +241,7 @@ void ClientRuntime::update_saves(ClientTick &tick)
     std::string goal_hud;
     if (goals && tick.seed_matches)
     {
-        if (goals->type != "cortex" && goals->type != "all_bosses")
+        if (goals->type != "cortex" && goals->type != "all_bosses" && goals->type != "cortex_last" && goals->type != "cortex_requirements")
         {
             const auto count = goal_progress(*goals, completed_levels, tick.checks, tick.checked, tick.items);
             if (goals->type == "token_hunt")
@@ -253,10 +253,20 @@ void ClientRuntime::update_saves(ClientTick &tick)
                 print_console("AP goal: " + progress, false);
             previous_goal_progress['G'] = progress;
         }
-        if (goals->type == "all_bosses")
+        if (goals->type == "all_bosses" || goals->type == "cortex_last" || goals->type == "cortex_requirements")
             goal_hud = "Bosses: " +
                        std::to_string(goal_progress(*goals, completed_levels, tick.checks, tick.checked, tick.items)) +
                        '/' + std::to_string(goals->levels.size());
+        if (goals->type == "cortex_requirements")
+        {
+            for (const auto &[kind, target] : goals->requirements)
+                goal_hud += std::string(kind == "token_hunt" ? " | Tokens:" : " | Clears:") +
+                            std::to_string(requirement_progress(seed->rules, kind, tick.items, tick.checked)) + '/' +
+                            std::to_string(target);
+            if (previous_goal_progress['G'] != goal_hud)
+                print_console("AP goal: " + goal_hud + ". All unlock requirements are required before Cortex.", false);
+            previous_goal_progress['G'] = goal_hud;
+        }
         for (char campaign = '1'; campaign <= '3'; ++campaign)
         {
             unsigned total = 0, cleared = 0;

@@ -121,7 +121,7 @@ void ClientRuntime::update_bridge(AP_ConnectionStatus status)
         {
             print_console(box_markers->startup()
                               ? "AP startup screen active. Correct the connection here. /quit closes NST."
-                              : "AP in-game renderer active. F1: console | F7: markers/HUD | F10: vanilla controls.",
+                              : "AP in-game renderer active. F1: console | F2: entrances | F7: markers/HUD | F10: vanilla controls.",
                           false);
             render_announced = true;
         }
@@ -224,7 +224,7 @@ void ClientRuntime::update_display(ClientTick &tick)
         }
         std::set<std::string> unlocked;
         for (const auto &[source, destination] : tick.placements)
-            if (!level_locked(*seed, tick.items, source))
+            if (!level_locked(*seed, tick.items, source, tick.cleared))
                 unlocked.insert(destination);
         box_markers->progress(progress, tick.placements, unlocked);
     }
@@ -245,7 +245,7 @@ void ClientRuntime::update_display(ClientTick &tick)
             markers.push_back(marker);
         }
         box_markers->update(std::move(markers));
-        std::string text = "F1: console | F7: markers/HUD";
+        std::string text = "F1: console | F2: entrances | F7: markers/HUD";
         const bool death_link = session.slot_data()["death_link"].asBool();
         box_markers->configure(seed->movement_styles, death_link);
         auto collectible_checked = tick.checked;

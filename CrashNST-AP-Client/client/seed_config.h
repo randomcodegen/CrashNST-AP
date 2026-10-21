@@ -10,6 +10,7 @@ struct CampaignGoals
     std::set<std::string> levels, regular_levels;
     std::string type = "cortex";
     unsigned required = 0;
+    std::map<std::string, unsigned> requirements;
 };
 struct SeedConfig
 {
@@ -26,9 +27,9 @@ struct SeedConfig
 std::int64_t access_item_id(const std::string &level);
 bool has_access(const std::vector<std::pair<std::int64_t, int>> &received, const std::string &level);
 bool level_locked(const SeedConfig &seed, const std::vector<std::pair<std::int64_t, int>> &received,
-                  const std::string &level);
+                  const std::string &level, const std::set<std::int64_t> &cleared = {});
 bool level_accessible(const SeedConfig &seed, const std::vector<std::pair<std::int64_t, int>> &received,
-                      const std::string &level);
+                      const std::string &level, const std::set<std::int64_t> &cleared = {});
 bool hub_area_unlocked(const SeedConfig &seed, const std::vector<std::pair<std::int64_t, int>> &received,
                        unsigned campaign, unsigned area);
 unsigned goal_progress(const CampaignGoals &goals, const std::set<std::string> &completed,

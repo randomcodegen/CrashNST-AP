@@ -69,7 +69,7 @@ void ClientRuntime::initialize_ap()
     deferred_receipt_bytes = 0;
     startup_connection.retry(server);
     AP_Init(server.c_str(), "Crash Bandicoot N. Sane Trilogy", slot.c_str(), connection_password.c_str());
-    AP_NetworkVersion client_version{1, 0, 2};
+    AP_NetworkVersion client_version{1, 0, 3};
     AP_SetClientVersion(&client_version);
     AP_EnableQueueItemRecvMsgs(false);
     AP_SetDeathLinkSupported(true);
@@ -191,7 +191,7 @@ void ClientRuntime::handle_commands()
                     "| /quit | /markers on/off/toggle | /boxmarkers bounds/tint/off | /outoflogic on/off | /hubdistance 0..100000 | "
                     "/hubdistance_c1 /hubdistance_c2 /hubdistance_c3 0..100000 | /tint_opacity 0..1 | "
                     "/crashsanity on/off/toggle\nChat and !commands go to the AP server. Tab completes commands and "
-                    "!hint / !hint_location names.\nF1: console | F7: markers/HUD | F10: vanilla controls");
+                    "!hint / !hint_location names.\nF1: console | F2: entrances | F7: markers/HUD | F10: vanilla controls");
             else if (command == "/server")
             {
                 if (argument.empty())

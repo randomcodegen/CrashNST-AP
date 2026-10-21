@@ -53,6 +53,8 @@ namespace
     std::vector<std::string> history;
     unsigned history_index = 0, tab_index = 0, scroll = 0;
     bool tab_active = false;
+    bool entrance_panel = false;
+    unsigned entrance_campaign = 1, entrance_scroll = 0;
     PopupQueue popups;
     std::uint64_t popup_seen = 0;
     bool discard_popup_history = false;
@@ -340,6 +342,8 @@ namespace
     void toggle_console()
     {
         console_open = !console_open.load();
+        if (!console_open)
+            entrance_panel = false;
         if (console_open)
         {
             popups.clear();
@@ -442,7 +446,23 @@ namespace
         {
             if (wp == VK_F1)
             {
-                toggle_console();
+                if (entrance_panel)
+                    entrance_panel = false;
+                else
+                    toggle_console();
+                return 0;
+            }
+            if (wp == VK_F2)
+            {
+                if (console_open && entrance_panel)
+                    toggle_console();
+                else
+                {
+                    if (!console_open)
+                        toggle_console();
+                    entrance_panel = true;
+                    entrance_scroll = 0;
+                }
                 return 0;
             }
             if (wp == VK_F7)
@@ -460,6 +480,31 @@ namespace
                 if (wp == VK_ESCAPE)
                 {
                     toggle_console();
+                    return 0;
+                }
+                if (entrance_panel)
+                {
+                    const auto count = snapshot ? entrance_list(*snapshot, entrance_campaign).size() : 0;
+                    if (wp >= '1' && wp <= '3')
+                    {
+                        entrance_campaign = static_cast<unsigned>(wp - '0');
+                        entrance_scroll = 0;
+                    }
+                    else if (wp == VK_TAB)
+                    {
+                        entrance_campaign = entrance_campaign % 3 + 1;
+                        entrance_scroll = 0;
+                    }
+                    else if (wp == VK_UP || wp == VK_PRIOR || wp == VK_HOME)
+                    {
+                        const auto step = wp == VK_UP ? 1u : wp == VK_PRIOR ? 8u : entrance_scroll;
+                        entrance_scroll = entrance_scroll > step ? entrance_scroll - step : 0;
+                    }
+                    else if (wp == VK_DOWN || wp == VK_NEXT || wp == VK_END)
+                    {
+                        const auto step = wp == VK_DOWN ? 1u : wp == VK_NEXT ? 8u : static_cast<unsigned>(count);
+                        entrance_scroll = std::min(entrance_scroll + step, count ? static_cast<unsigned>(count - 1) : 0);
+                    }
                     return 0;
                 }
                 const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0, shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -564,6 +609,8 @@ namespace
             }
             if (message == WM_CHAR)
             {
+                if (entrance_panel)
+                    return 0;
                 if (wp >= 32 && wp != 127)
                 {
                     input.insert(utf8(static_cast<wchar_t>(wp)));
@@ -574,6 +621,15 @@ namespace
             }
             if (message == WM_MOUSEWHEEL)
             {
+                if (entrance_panel)
+                {
+                    const auto count = snapshot ? entrance_list(*snapshot, entrance_campaign).size() : 0;
+                    if (GET_WHEEL_DELTA_WPARAM(wp) > 0)
+                        entrance_scroll = entrance_scroll > 3 ? entrance_scroll - 3 : 0;
+                    else
+                        entrance_scroll = std::min(entrance_scroll + 3, count ? static_cast<unsigned>(count - 1) : 0);
+                    return 0;
+                }
                 if (GET_WHEEL_DELTA_WPARAM(wp) > 0)
                     scroll = std::min(scroll + 3, snapshot->line_count ? snapshot->line_count - 1 : 0);
                 else
@@ -1209,7 +1265,31 @@ namespace
             }
         }
         const auto now = GetTickCount64();
-        if (console_open)
+        if (console_open && entrance_panel)
+        {
+            const float height = std::min<float>(r.height - 24, 650);
+            r.quad(12, 12, r.width - 24, height, 0xee141414);
+            r.text(24, 20, "Unlocked entrances | F2/Esc: close | F1: console", 0xff20d8ff);
+            r.text(24, 46, "1/2/3 or Tab: campaign | Up/Down, PgUp/PgDn: scroll", 0xffdddddd);
+            const auto rows = entrance_list(*snapshot, entrance_campaign);
+            r.text(24, 76, "Crash " + std::to_string(entrance_campaign) + " hub: " + std::to_string(rows.size()) + " unlocked entrances", 0xff20d8ff);
+            if (rows.empty())
+                r.text(24, 108, snapshot->level_count ? "No unlocked entrances in this hub." : "Connect to a seed to load entrance access.", 0xffdddddd);
+            entrance_scroll = std::min(entrance_scroll, rows.empty() ? 0u : static_cast<unsigned>(rows.size() - 1));
+            float y = 108;
+            for (unsigned i = entrance_scroll; i < rows.size(); ++i)
+            {
+                Line line;
+                for (std::size_t at = 0; at < rows[i].size() && line.count < max_spans; at += 255)
+                    copy(line.spans[line.count++].text, rows[i].substr(at, 255));
+                const auto row_height = r.rich_line(24, y, line, r.width - 30, false);
+                if (y + row_height > height - 20)
+                    break;
+                r.rich_line(24, y, line, r.width - 30, true, height - 20);
+                y += row_height + 8;
+            }
+        }
+        else if (console_open)
         {
             const float console_height = std::min<float>(r.height - 24, 550);
             r.quad(12, 12, r.width - 24, console_height, 0xee141414);

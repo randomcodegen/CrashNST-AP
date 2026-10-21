@@ -30,7 +30,7 @@ namespace ingame
                 return i;
         return 5;
     }
-    constexpr unsigned protocol = 18, max_boxes = 8192, max_levels = 112;
+    constexpr unsigned protocol = 19, max_boxes = 8192, max_levels = 112;
     constexpr unsigned default_hub_distance = 250, max_hub_distance = 100000;
     constexpr std::array<unsigned, 3> default_hub_distances{default_hub_distance, default_hub_distance, default_hub_distance};
     constexpr float default_tint_opacity = 0.75f;
@@ -68,7 +68,7 @@ namespace ingame
     };
     struct Entrance
     {
-        char hub[5]{}, destination[5]{};
+        char hub[5]{}, destination[5]{}, source[5]{};
         float position[3]{};
         int c3_button = -1;
     };
@@ -213,7 +213,7 @@ namespace ingame
             if (!terminated(s.levels[i].key) || !terminated(s.levels[i].title) || !terminated(s.levels[i].counts) || !terminated(s.levels[i].collectible_counts) || s.levels[i].style > 3)
                 return false;
         for (unsigned i = 0; i < s.entrance_count; ++i)
-            if (!terminated(s.entrances[i].hub) || !terminated(s.entrances[i].destination) ||
+            if (!terminated(s.entrances[i].hub) || !terminated(s.entrances[i].destination) || !terminated(s.entrances[i].source) ||
                 s.entrances[i].c3_button < -1 || s.entrances[i].c3_button >= 36)
                 return false;
         for (unsigned i = 0; i < s.line_count; ++i)

@@ -48,7 +48,7 @@ void ClientRuntime::update_routing(ClientTick &tick)
         {
             std::set<std::string> allowed;
             for (const auto &[destination, source] : secret_stages)
-                if (tick.levels.count(destination) && !level_locked(*seed, tick.items, destination))
+                if (tick.levels.count(destination) && !level_locked(*seed, tick.items, destination, tick.cleared))
                     allowed.insert(destination);
             level_routing->secrets(allowed);
             const auto count = level_routing->start_count();
@@ -87,7 +87,7 @@ void ClientRuntime::update_zone(ClientTick &tick)
     {
         for (const auto &level : c2_access_levels)
         {
-            const bool access = !level_locked(*seed, tick.items, level);
+            const bool access = !level_locked(*seed, tick.items, level, tick.cleared);
             const auto previous_access_it = previous_access.find(level);
             if (previous_access_it == previous_access.end() || previous_access_it->second != access)
                 std::cout << "Desired " << level << " access: " << (access ? "open" : "closed") << std::endl;
@@ -388,7 +388,7 @@ void ClientRuntime::update_ownership(ClientTick &tick)
                     break;
                 const auto scene = read_scene(GetCurrentProcess());
                 const auto level = level_key(scene.zone);
-                if (!scene.camera_active || !level_accessible(*seed, tick.items, level))
+                if (!scene.camera_active || !level_accessible(*seed, tick.items, level, tick.cleared))
                     break;
                 if (session.reserve_filler(index))
                 {

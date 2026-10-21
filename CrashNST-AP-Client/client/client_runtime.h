@@ -29,6 +29,7 @@ struct ClientTick
     const std::map<std::string, std::string> &placements;
     bool online, room_valid = false, room_ready = false, box_checks = false, seed_matches = false;
     bool c1_active = false, c2_active = false, c3_active = false;
+    std::set<std::int64_t> cleared;
 };
 struct C3HubState
 {

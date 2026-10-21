@@ -293,6 +293,7 @@ void BoxMarkers::progress(const CheckProgress &counts, const std::map<std::strin
         entry.c3_button = index;
         ingame::copy(entry.hub, anchor.hub);
         ingame::copy(entry.destination, destination);
+        ingame::copy(entry.source, anchor.level);
     }
     ++shared_->revision;
     unlock();

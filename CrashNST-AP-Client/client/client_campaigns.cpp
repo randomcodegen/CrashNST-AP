@@ -72,8 +72,8 @@ void ClientRuntime::update_c2(ClientTick &tick)
         {
             try
             {
-                const bool locked = level[0] == 'B' ? !tick.room_ready || level_locked(*seed, tick.items, level)
-                                                    : tick.room_ready && level_locked(*seed, tick.items, level);
+                const bool locked = level[0] == 'B' ? !tick.room_ready || level_locked(*seed, tick.items, level, tick.cleared)
+                                                    : tick.room_ready && level_locked(*seed, tick.items, level, tick.cleared);
                 gate->set_locked(locked);
                 gate_errors.erase(level);
             }
@@ -91,7 +91,7 @@ void ClientRuntime::update_c2(ClientTick &tick)
             if (tick.room_ready)
             {
                 for (const auto &[level, gate] : c2_gates)
-                    if (level[0] == 'B' && !level_locked(*seed, tick.items, level) && !gate_errors.count(level) &&
+                    if (level[0] == 'B' && !level_locked(*seed, tick.items, level, tick.cleared) && !gate_errors.count(level) &&
                         gate->state().hub_active)
                         active_bosses.emplace(level, gate->entity());
             }
@@ -183,7 +183,7 @@ C3HubState ClientRuntime::update_c3_gates(ClientTick &tick)
     std::map<std::string, std::uintptr_t> c3_entities;
     if (tick.room_ready)
         for (const auto &[key, gate] : c3_gates)
-            if (!level_locked(*seed, tick.items, key.substr(0, 4)))
+            if (!level_locked(*seed, tick.items, key.substr(0, 4), tick.cleared))
                 c3_allowed.insert(key);
     if (tick.c3_active)
         for (auto &[key, gate] : c3_gates)
@@ -264,7 +264,7 @@ void ClientRuntime::update_c1(ClientTick &tick)
                     if (key.size() != 4 || key[1] != '1')
                         continue;
                     traversal = true;
-                    if (!level_locked(*seed, tick.items, key))
+                    if (!level_locked(*seed, tick.items, key, tick.cleared))
                         allowed.insert(key);
                 }
             if (!c1_map->update(allowed, traversal))

@@ -224,19 +224,38 @@ def lock_requirements(required, placements, hub_locks, level_locks):
 
 def validate_victory_goal(selected, bosses, config):
     """validate the victory condition against the selected pool"""
+    if type(config) is dict and config.get("type") == "cortex_requirements":
+        if set(config) != {"type", "required", "boss_mode", "requirements"}:
+            raise ValueError("Invalid Cortex requirements")
+        mode, required = config["boss_mode"], config["requirements"]
+        if (
+            mode not in ("cortex", "all_bosses", "cortex_last")
+            or type(required) is not dict
+            or not required
+        ):
+            raise ValueError("Invalid Cortex requirements")
+        validate_victory_goal(
+            selected, bosses, {"type": mode, "required": config["required"]}
+        )
+        for kind, count in required.items():
+            if kind not in ("level_clears", "token_hunt"):
+                raise ValueError("Unknown Cortex requirement")
+            validate_victory_goal(selected, [], {"type": kind, "required": count})
+        return {**config, "requirements": dict(required)}
     finals = {key for key in selected if key in FINALS}
     regular = sum(key.startswith("L") for key in selected)
     if (
         type(config) is not dict
         or set(config) != {"type", "required"}
-        or config["type"] not in ("cortex", "all_bosses", "level_clears", "token_hunt")
+        or config["type"]
+        not in ("cortex", "all_bosses", "cortex_last", "level_clears", "token_hunt")
         or type(config["required"]) is not int
         or type(bosses) is not list
         or any(type(key) is not str for key in bosses)
         or len(set(bosses)) != len(bosses)
     ):
         raise ValueError("Invalid victory goal")
-    if config["type"] == "all_bosses":
+    if config["type"] in ("all_bosses", "cortex_last"):
         campaigns = {BY_KEY[key].campaign for key in bosses if key in BY_KEY}
         expected = {
             level.key

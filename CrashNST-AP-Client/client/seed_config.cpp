@@ -56,7 +56,7 @@ bool has_access(const std::vector<std::pair<std::int64_t, int>> &received, const
 }
 
 bool level_locked(const SeedConfig &seed, const std::vector<std::pair<std::int64_t, int>> &received,
-                  const std::string &level)
+                  const std::string &level, const std::set<std::int64_t> &cleared)
 {
     auto source = level.substr(0, 4);
     if (source.size() == 4 && source[0] == 'S')
@@ -69,7 +69,11 @@ bool level_locked(const SeedConfig &seed, const std::vector<std::pair<std::int64
             for (const auto &[entrance, target] : seed.placements)
                 if (target == parent)
                     physical = entrance;
-    return !seed.levels.count(destination) ||
+    const auto bosses = seed.rules.boss_requirements.find(destination);
+    return (seed.rules.gated_finals.count(destination) && !cortex_requirements_met(seed.rules, received, cleared)) ||
+           (bosses != seed.rules.boss_requirements.end() &&
+            !std::all_of(bosses->second.begin(), bosses->second.end(), [&](auto boss) { return cleared.count(boss); })) ||
+           !seed.levels.count(destination) ||
            (seed.level_access_locks && !has_access(received, destination)) ||
            !hub_area_unlocked(seed, received, physical[1] - '0', hub_area(physical));
 }
@@ -87,17 +91,38 @@ bool hub_area_unlocked(const SeedConfig &seed, const std::vector<std::pair<std::
 }
 
 bool level_accessible(const SeedConfig &seed, const std::vector<std::pair<std::int64_t, int>> &received,
-                      const std::string &level)
+                      const std::string &level, const std::set<std::int64_t> &cleared)
 {
     const auto entrance = std::find_if(seed.placements.begin(), seed.placements.end(), [&](const auto &entry) {
         return entry.second == level;
     });
-    return entrance != seed.placements.end() && !level_locked(seed, received, entrance->first);
+    return entrance != seed.placements.end() && !level_locked(seed, received, entrance->first, cleared);
 }
 
 static CampaignGoals parse_goals(const Json::Value &levels, const std::set<std::string> &selected,
                                  const std::map<CheckKey, std::int64_t> &checks, const Json::Value &goal)
 {
+    if (goal["type"] == "cortex_requirements")
+    {
+        if (!goal.isObject() || goal.size() != 4 || !goal["boss_mode"].isString() ||
+            (goal["boss_mode"] != "cortex" && goal["boss_mode"] != "all_bosses" && goal["boss_mode"] != "cortex_last") ||
+            !goal["requirements"].isObject() || goal["requirements"].empty() || goal["requirements"].size() > 2)
+            throw std::runtime_error("Invalid Cortex requirements");
+        Json::Value base_goal(Json::objectValue);
+        base_goal["type"] = goal["boss_mode"];
+        base_goal["required"] = goal["required"];
+        auto result = parse_goals(levels, selected, checks, base_goal);
+        result.type = "cortex_requirements";
+        for (const auto &kind : goal["requirements"].getMemberNames())
+        {
+            const auto &count = goal["requirements"][kind];
+            if ((kind != "level_clears" && kind != "token_hunt") || !count.isUInt() || !count.asUInt() ||
+                count.asUInt() > (kind == "level_clears" ? result.regular_levels.size() : checks.size()))
+                throw std::runtime_error("Invalid Cortex requirement target");
+            result.requirements[kind] = count.asUInt();
+        }
+        return result;
+    }
     if (!levels.isArray() || levels.size() > 16 || Json::FastWriter().write(levels).size() > 1024)
         throw std::runtime_error("Invalid or missing goal_levels slot data");
     CampaignGoals result;
@@ -106,7 +131,7 @@ static CampaignGoals parse_goals(const Json::Value &levels, const std::set<std::
         throw std::runtime_error("Invalid victory_goal slot data");
     result.type = goal["type"].asString();
     result.required = goal["required"].asUInt();
-    if (result.type != "cortex" && result.type != "all_bosses" && result.type != "level_clears" &&
+    if (result.type != "cortex" && result.type != "all_bosses" && result.type != "cortex_last" && result.type != "level_clears" &&
         result.type != "token_hunt")
         throw std::runtime_error("Unknown victory goal type");
     for (const auto &value : levels)
@@ -116,7 +141,7 @@ static CampaignGoals parse_goals(const Json::Value &levels, const std::set<std::
         const auto level = value.asString();
         const bool boss = level.size() == 4 && level[0] == 'B' && level[1] >= '1' && level[1] <= '3' &&
                           level[2] == '0' && level[3] >= '1' && level[3] <= (level[1] == '1' ? '6' : '5');
-        if (!boss || (result.type != "all_bosses" && level != "B106" && level != "B205" && level != "B305") ||
+        if (!boss || (result.type != "all_bosses" && result.type != "cortex_last" && level != "B106" && level != "B205" && level != "B305") ||
             !selected.count(level) || !result.levels.insert(level).second)
             throw std::runtime_error("Goal bosses must be unique selected bosses matching the goal type");
     }
@@ -130,12 +155,12 @@ static CampaignGoals parse_goals(const Json::Value &levels, const std::set<std::
         if (check == checks.end() || check->second <= 0)
             throw std::runtime_error("Goal requires a clear check for every selected level");
     }
-    if (result.type == "all_bosses")
+    if (result.type == "all_bosses" || result.type == "cortex_last")
         for (const auto &level : result.levels)
             for (char number = '1'; number <= (level[1] == '1' ? '6' : '5'); ++number)
                 if (!result.levels.count(std::string("B") + level[1] + '0' + number))
                     throw std::runtime_error("All-bosses goal requires every boss in its goal campaigns");
-    if (result.type == "cortex" || result.type == "all_bosses")
+    if (result.type == "cortex" || result.type == "all_bosses" || result.type == "cortex_last")
     {
         if (result.levels.empty() || result.required)
             throw std::runtime_error("Boss goal requires bosses and no counter target");
@@ -163,7 +188,20 @@ bool goals_complete(const CampaignGoals &goals, const std::set<std::string> &com
                     const std::map<CheckKey, std::int64_t> &checks, const std::set<std::int64_t> &acknowledged,
                     const std::vector<std::pair<std::int64_t, int>> &received)
 {
-    if (goals.type != "cortex" && goals.type != "all_bosses")
+    if (goals.type == "cortex_requirements")
+    {
+        CheckRules rules;
+        rules.cortex_requirements = goals.requirements;
+        for (const auto &level : goals.regular_levels)
+        {
+            const auto found = checks.find({level, "clear"});
+            if (found != checks.end())
+                rules.regular_clears.insert(found->second);
+        }
+        if (!cortex_requirements_met(rules, received, acknowledged))
+            return false;
+    }
+    else if (goals.type != "cortex" && goals.type != "all_bosses" && goals.type != "cortex_last")
         return goal_progress(goals, completed, checks, acknowledged, received) >= goals.required;
     if (goals.levels.empty())
         return false;

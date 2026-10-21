@@ -66,7 +66,7 @@ class CrashWorld(World):
     item_name_to_id = ITEMS
     location_name_to_id = LOCATIONS
     ut_can_gen_without_yaml = True
-    required_client_version = (1, 0, 2)
+    required_client_version = (1, 0, 3)
 
     def create_item(self, name):
         classification = (
@@ -178,9 +178,9 @@ class CrashWorld(World):
             for address, needed in rules.items()
         }
         self.active_checks = {int(address) for address in server_checks}
-        if self.victory_goal["type"] == "token_hunt" and self.victory_goal[
-            "required"
-        ] > len(self.active_checks):
+        if self.victory_goal.get("requirements", {}).get("token_hunt", 0) > len(self.active_checks) or (
+            self.victory_goal["type"] == "token_hunt" and self.victory_goal["required"] > len(self.active_checks)
+        ):
             raise ValueError("Token target exceeds selected checks")
         self.active_crates = [
             crate for address, crate in crates.items() if address in server_checks
@@ -272,6 +272,9 @@ class CrashWorld(World):
                     if level.campaign == game and level.key.startswith("B")
                 )
         goal = self.options.goal.value
+        requirements = self.options.cortex_requirements.value
+        if requirements and goal > 3:
+            raise ValueError("Cortex Unlock Requirements need a Cortex goal")
         all_bosses = goal <= 3 and bool(self.options.require_all_bosses.value)
         if goal == 0:
             self.goal_levels = [key for key in FINALS if key in chosen]
@@ -293,13 +296,17 @@ class CrashWorld(World):
             ]
             chosen.update(self.goal_levels)
         self.active_levels = [level for level in LEVELS if level.key in chosen]
-        if goal == 4:
+        if goal == 4 or "level_clears" in requirements:
             self.options.goal_count.value = min(
                 self.options.goal_count.value,
                 sum(level.key.startswith("L") for level in self.active_levels),
             )
         if goal <= 3:
-            victory = {"type": "all_bosses" if all_bosses else "cortex", "required": 0}
+            victory = {
+                "type": "cortex_last" if self.options.require_all_bosses.value == 2
+                else "all_bosses" if all_bosses else "cortex",
+                "required": 0,
+            }
         elif goal == 4:
             victory = {
                 "type": "level_clears",
@@ -308,6 +315,12 @@ class CrashWorld(World):
         else:
             # create_items sets the final token target once filler capacity is known.
             victory = {"type": "token_hunt", "required": 1}
+        if requirements:
+            victory = {"type": "cortex_requirements", "required": 0,
+                       "boss_mode": victory["type"], "requirements": {
+                           name: self.options.goal_count.value if name == "level_clears" else 1
+                           for name in sorted(requirements)
+                       }}
         self.victory_goal = validate_victory_goal(chosen, self.goal_levels, victory)
         self.level_placements = {level.key: level.key for level in self.active_levels}
         self.movement_styles = (
@@ -431,10 +444,20 @@ class CrashWorld(World):
             region = Region(level.name, self.player, self.multiworld)
             self.multiworld.regions.append(region)
             required = self.lock_requirements(entrance_requirements(level, self.active_levels))
+            bosses = tuple(
+                f"{BY_KEY[key].name} Defeated"
+                for key in self.goal_levels
+                if self.victory_goal.get("boss_mode", self.victory_goal["type"]) == "cortex_last" and level.key in FINALS
+                and level.key in self.goal_levels and key not in FINALS
+                and BY_KEY[key].campaign == level.campaign
+            )
             menu.connect(
                 region,
                 name=f"{BY_KEY[entrances[level.key]].name} Entrance",
-                rule=lambda state, names=Counter(required): state.has_all_counts(names, self.player),
+                rule=lambda state, names=Counter(required), bosses=bosses, final=(level.key in FINALS and level.key in self.goal_levels): (
+                    state.has_all_counts(names, self.player) and state.has_all(bosses, self.player)
+                    and (not final or self.cortex_requirements_met(state))
+                ),
             )
             for event, name, address in checks(level):
                 if (
@@ -532,7 +555,7 @@ class CrashWorld(World):
                     )
                 )
                 region.locations.append(victory)
-            if self.victory_goal["type"] == "level_clears" and level.key.startswith(
+            if (self.victory_goal["type"] == "level_clears" or "level_clears" in self.victory_goal.get("requirements", {})) and level.key.startswith(
                 "L"
             ):
                 clear = CrashLocation(
@@ -610,7 +633,7 @@ class CrashWorld(World):
             ):
                 item.classification = ItemClassification.useful
         tokens = 0
-        if self.victory_goal["type"] == "token_hunt":
+        if self.victory_goal["type"] == "token_hunt" or "token_hunt" in self.victory_goal.get("requirements", {}):
             filler = capacity - len(pool)
             if not filler:
                 raise ValueError(
@@ -619,9 +642,13 @@ class CrashWorld(World):
                     "or select more randomized checks."
                 )
             tokens = (filler * self.options.token_percentage.value + 99) // 100
-            self.victory_goal["required"] = (
+            target = (
                 tokens * self.options.token_required_percentage.value + 99
             ) // 100
+            if self.victory_goal["type"] == "token_hunt":
+                self.victory_goal["required"] = target
+            else:
+                self.victory_goal["requirements"]["token_hunt"] = target
         pool.extend(self.create_item(TOKEN) for _ in range(tokens))
         pool.extend(
             self.create_item(self.get_filler_item_name())
@@ -629,11 +656,15 @@ class CrashWorld(World):
         )
         self.multiworld.itempool.extend(pool)
 
+    def cortex_requirements_met(self, state):
+        return all(state.has(TOKEN if kind == "token_hunt" else "Level Cleared", self.player, count)
+                   for kind, count in self.victory_goal.get("requirements", {}).items())
+
     def set_rules(self):
         kind, count = self.victory_goal["type"], self.victory_goal["required"]
-        if kind in ("cortex", "all_bosses"):
+        if kind in ("cortex", "all_bosses", "cortex_last", "cortex_requirements"):
             self.multiworld.completion_condition[self.player] = (
-                lambda state: state.has_all(
+                lambda state: self.cortex_requirements_met(state) and state.has_all(
                     tuple(f"{BY_KEY[key].name} Defeated" for key in self.goal_levels),
                     self.player,
                 )

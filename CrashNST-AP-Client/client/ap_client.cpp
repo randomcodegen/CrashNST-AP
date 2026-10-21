@@ -193,6 +193,8 @@ int ClientRuntime::run()
                         seed ? seed->levels : empty_levels,
                         seed ? seed->placements : empty_placements,
                         status == AP_ConnectionStatus::Authenticated};
+        tick.cleared = session.pending();
+        tick.cleared.insert(tick.checked.begin(), tick.checked.end());
         update_routing(tick);
         update_display(tick);
         update_saves(tick);

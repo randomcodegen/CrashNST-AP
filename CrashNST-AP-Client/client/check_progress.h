@@ -38,8 +38,17 @@ struct CheckRules
     };
     std::vector<Rule> checks;
     std::map<std::int64_t, std::int64_t> local_reward_items;
+    std::map<std::string, std::set<std::int64_t>> boss_requirements;
+    std::set<std::string> gated_finals;
+    std::set<std::int64_t> regular_clears;
+    std::map<std::string, unsigned> cortex_requirements;
     std::string error;
 };
+unsigned requirement_progress(const CheckRules &rules, const std::string &kind,
+                              const std::vector<std::pair<std::int64_t, int>> &items,
+                              const std::set<std::int64_t> &checked, const std::set<std::int64_t> &pending = {});
+bool cortex_requirements_met(const CheckRules &rules, const std::vector<std::pair<std::int64_t, int>> &items,
+                             const std::set<std::int64_t> &checked, const std::set<std::int64_t> &pending = {});
 CheckRules compile_check_rules(const std::map<std::pair<std::string, std::string>, std::int64_t> &checks,
                                const Json::Value &slot_data, const std::set<std::string> &selected);
 CheckProgress check_progress(const CheckRules &rules, const std::vector<std::pair<std::int64_t, int>> &items,

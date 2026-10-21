@@ -46,6 +46,7 @@ namespace ingame
     };
     std::array<POINT, 3> campaign_label_positions(unsigned width, unsigned height);
     bool entrance_label_visible(const std::array<float, 3> &player, const float *entrance, unsigned distance);
+    std::vector<std::string> entrance_list(const Shared &state, unsigned campaign);
     struct Popup
     {
         Line line;

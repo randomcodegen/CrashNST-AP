@@ -87,6 +87,41 @@ CheckRules compile_check_rules(const std::map<std::pair<std::string, std::string
                                const Json::Value &slot_data, const std::set<std::string> &selected)
 {
     CheckRules result;
+    const auto &victory = slot_data["victory_goal"];
+    if (victory["type"] == "cortex_requirements")
+    {
+        for (const auto &kind : victory["requirements"].getMemberNames())
+            result.cortex_requirements[kind] = victory["requirements"][kind].asUInt();
+        for (const auto &goal : slot_data["goal_levels"])
+            if (goal == "B106" || goal == "B205" || goal == "B305")
+                result.gated_finals.insert(goal.asString());
+        for (const auto &[key, id] : checks)
+            if (key.first[0] == 'L' && key.second == "clear")
+                result.regular_clears.insert(id);
+    }
+    if (victory["type"] == "cortex_last" || victory["boss_mode"] == "cortex_last")
+    {
+        const auto &goals = slot_data["goal_levels"];
+        if (!goals.isArray() || goals.size() > 16)
+            throw std::runtime_error("Invalid Cortex-last goal bosses");
+        for (const auto &goal : goals)
+        {
+            if (!goal.isString())
+                throw std::runtime_error("Invalid Cortex-last goal boss");
+            const auto final = goal.asString();
+            if (final != "B106" && final != "B205" && final != "B305")
+                continue;
+            auto &required = result.boss_requirements[final];
+            for (char number = '1'; number < final[3]; ++number)
+            {
+                const auto boss = std::string("B") + final[1] + '0' + number;
+                const auto check = checks.find({boss, "clear"});
+                if (check == checks.end())
+                    throw std::runtime_error("Cortex-last prerequisite clear is missing");
+                required.insert(check->second);
+            }
+        }
+    }
     const auto &rules = slot_data["check_requirements"];
     static const auto valid_items = known_items();
     const bool rules_valid = rules.isObject() && rules.size() == checks.size();
@@ -156,6 +191,26 @@ CheckRules compile_check_rules(const std::map<std::pair<std::string, std::string
     return result;
 }
 
+unsigned requirement_progress(const CheckRules &rules, const std::string &kind,
+                              const std::vector<std::pair<std::int64_t, int>> &items,
+                              const std::set<std::int64_t> &checked, const std::set<std::int64_t> &pending)
+{
+    if (kind == "token_hunt")
+        return static_cast<unsigned>(std::count_if(items.begin(), items.end(), [](const auto &item) {
+            return item.first == 0xcb0000 + 2203;
+        }));
+    return static_cast<unsigned>(std::count_if(rules.regular_clears.begin(), rules.regular_clears.end(), [&](auto id) {
+        return checked.count(id) || pending.count(id);
+    }));
+}
+bool cortex_requirements_met(const CheckRules &rules, const std::vector<std::pair<std::int64_t, int>> &items,
+                             const std::set<std::int64_t> &checked, const std::set<std::int64_t> &pending)
+{
+    return std::all_of(rules.cortex_requirements.begin(), rules.cortex_requirements.end(), [&](const auto &entry) {
+        return requirement_progress(rules, entry.first, items, checked, pending) >= entry.second;
+    });
+}
+
 CheckProgress check_progress(const CheckRules &rules, const std::vector<std::pair<std::int64_t, int>> &items,
                              const std::set<std::int64_t> &checked, const std::set<std::int64_t> &pending,
                              const std::set<std::int64_t> &local_collected)
@@ -195,7 +250,12 @@ CheckProgress check_progress(const CheckRules &rules, const std::vector<std::pai
             collectible->logic_known = false;
         if (!known && result.error.empty())
             result.error = "Unknown check requirements. Affected reachable markers hidden";
-        if (known && std::all_of(required.begin(), required.end(), [&](const auto &item) { return owned[item.first] >= item.second; }))
+        const auto bosses = rules.boss_requirements.find(key.first);
+        const bool bosses_cleared = bosses == rules.boss_requirements.end() ||
+                                   std::all_of(bosses->second.begin(), bosses->second.end(),
+                                               [&](auto boss) { return checked.count(boss) || pending.count(boss); });
+        const bool final_ready = !rules.gated_finals.count(key.first) || cortex_requirements_met(rules, items, checked, pending);
+        if (known && bosses_cleared && final_ready && std::all_of(required.begin(), required.end(), [&](const auto &item) { return owned[item.first] >= item.second; }))
         {
             ++count.in_logic;
             if (collectible)

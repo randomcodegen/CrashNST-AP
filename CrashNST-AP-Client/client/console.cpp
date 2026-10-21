@@ -3,6 +3,7 @@
 #include <cctype>
 #include <stdexcept>
 #include <memory>
+#include <set>
 
 namespace ingame
 {
@@ -224,6 +225,36 @@ namespace ingame
     {
         const float dx = player[0] - entrance[0], dy = player[1] - entrance[1], dz = player[2] - entrance[2];
         return distance && dx * dx + dy * dy + dz * dz <= static_cast<float>(distance) * distance;
+    }
+    std::vector<std::string> entrance_list(const Shared &state, unsigned campaign)
+    {
+        std::vector<std::string> result;
+        std::set<std::string> seen;
+        const auto title = [&](const char *key) {
+            for (unsigned i = 0; i < state.level_count; ++i)
+                if (!std::strcmp(state.levels[i].key, key))
+                    return std::string(state.levels[i].title);
+            return std::string(key);
+        };
+        for (unsigned i = 0; i < state.entrance_count; ++i)
+        {
+            const auto &entry = state.entrances[i];
+            if (campaign < 1 || campaign > 3 || entry.hub[1] != '0' + campaign || !entry.source[0] || !seen.insert(entry.source).second)
+                continue;
+            auto row = title(entry.source);
+            if (std::strcmp(entry.source, entry.destination))
+                row += " -> " + title(entry.destination);
+            for (unsigned level = 0; level < state.level_count; ++level)
+                if (!std::strcmp(state.levels[level].key, entry.destination))
+                {
+                    row += "\nChecks: " + std::string(state.levels[level].counts);
+                    if (state.levels[level].collectible_counts[0])
+                        row += '\n' + std::string(state.levels[level].collectible_counts);
+                    break;
+                }
+            result.push_back(std::move(row));
+        }
+        return result;
     }
     std::array<POINT, 3> campaign_label_positions(unsigned width, unsigned height)
     {
