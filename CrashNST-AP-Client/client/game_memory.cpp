@@ -3376,6 +3376,22 @@ C3PlatformProbe probe_c3_platform_at(HANDLE process, std::uintptr_t button, cons
         // igEntity._bitfield._enabled is bit 8
         result.active[i] = (value<unsigned>(entity.data(), 56) & 0x100) != 0;
     }
+    const auto &gate = c3_barriers[0];
+    const auto owner = hub + gate.asset_offset;
+    const auto entity = read<144>(process, owner);
+    if (value<std::uintptr_t>(entity.data(), 0) != base + 0x141d490 ||
+        metadata_name(process, value<std::uintptr_t>(entity.data(), 128)) != gate.name ||
+        !std::equal(gate.position.begin(), gate.position.end(), entity.begin() + 32))
+        throw std::runtime_error("C3 platform property owner changed");
+    const auto behavior = c3_behavior(process, owner, "Scripts.Graph.L300_Hub_C3_Hub_ElectricGate", 176, 30, 152, 19);
+    const auto slab = behavior[2] - 23764;
+    result.false_value = c3_graph_node(process, slab, 20156, 0x1748280);
+    // the button's IsEnabled property is read-only, reuse the gate's writable Enabled property
+    result.enabled_property = read<48>(process, c3_graph_node(process, slab, 20188, 0x1748780));
+    if (read<1>(process, result.false_value + 24)[0] ||
+        !value<std::uintptr_t>(result.enabled_property.data(), 32) ||
+        !value<std::uintptr_t>(result.enabled_property.data(), 40))
+        throw std::runtime_error("C3 platform enabled property changed");
     return result;
 }
 
@@ -3410,14 +3426,13 @@ std::vector<unsigned char> c3_barrier_event_chain(const C3ButtonEventProbe &butt
 }
 
 std::vector<unsigned char> c3_platform_event_copy(const C3ButtonEventProbe &button,
-                                                  const C3BarrierEventProbe &barrier,
                                                   const C3PlatformProbe &platform,
                                                   std::uintptr_t remote, std::uintptr_t continuation)
 {
-    if (!remote || (remote & 7) || !continuation || !barrier.false_value ||
+    if (!remote || (remote & 7) || !platform.false_value ||
         !value<std::uintptr_t>(button.templates.data(), 176) ||
-        !value<std::uintptr_t>(barrier.enabled_property.data(), 0) ||
-        !value<std::uintptr_t>(barrier.enabled_property.data(), 32) || !value<std::uintptr_t>(barrier.enabled_property.data(), 40) ||
+        !value<std::uintptr_t>(platform.enabled_property.data(), 0) ||
+        !value<std::uintptr_t>(platform.enabled_property.data(), 32) || !value<std::uintptr_t>(platform.enabled_property.data(), 40) ||
         remote > std::numeric_limits<std::uintptr_t>::max() - 3 * 256)
         throw std::invalid_argument("Invalid C3 secret platform action addresses");
     std::vector<unsigned char> copied(3 * 256);
@@ -3432,12 +3447,12 @@ std::vector<unsigned char> c3_platform_event_copy(const C3ButtonEventProbe &butt
         auto *raw = copied.data() + i * 256;
         const auto address = remote + i * 256;
         std::copy(button.templates.begin() + 160, button.templates.begin() + 200, raw); // Engine assignment
-        std::copy(barrier.enabled_property.begin(), barrier.enabled_property.end(), raw + 48);
+        std::copy(platform.enabled_property.begin(), platform.enabled_property.end(), raw + 48);
         std::copy(button.templates.begin() + 64, button.templates.begin() + 96, raw + 96);
         std::copy(button.templates.begin() + 96, button.templates.begin() + 144, raw + 128);
         const auto pointer = [&](unsigned offset, std::uintptr_t value)
         { std::memcpy(raw + offset, &value, 8); };
-        pointer(16, c3_platforms[i].enabled ? value<std::uintptr_t>(button.templates.data(), 176) : barrier.false_value);
+        pointer(16, c3_platforms[i].enabled ? value<std::uintptr_t>(button.templates.data(), 176) : platform.false_value);
         pointer(24, address + 48);
         pointer(32, i + 1 < c3_platforms.size() ? address + 256 : continuation);
         pointer(48 + 24, address + 96); // igEntity.Enabled recipient is an explicit constant handle, independent of script fields
@@ -3520,8 +3535,6 @@ std::vector<EntranceAnchor> entrance_anchors()
         EntranceAnchor entrance;
         entrance.hub = hub;
         entrance.level = std::string(key).substr(0, 4);
-        if (entrance.level[0] == 'S')
-            entrance.level[0] = 'L';
         std::memcpy(entrance.position.data(), bytes.data(), 12);
         result.push_back(entrance);
     };

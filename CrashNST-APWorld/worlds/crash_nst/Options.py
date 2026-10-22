@@ -52,7 +52,7 @@ class Campaigns(Choice):
 class Crash1Levels(Range):
     """Number of regular Crash 1 levels to randomly select from the level pool.
 
-    Required bosses and source levels for secret stages are added separately.
+    Required bosses and source levels for secret routes are added separately.
     """
 
     display_name = "Crash 1 Levels"
@@ -64,7 +64,7 @@ class Crash1Levels(Range):
 class Crash2Levels(Range):
     """Number of regular Crash 2 levels to randomly select from the level pool.
 
-    Required bosses and source levels for secret stages are added separately.
+    Required bosses and source levels for secret routes are added separately.
     """
 
     display_name = "Crash 2 Levels"
@@ -76,7 +76,7 @@ class Crash2Levels(Range):
 class Crash3Levels(Range):
     """Number of regular Crash 3 levels to randomly select from the level pool.
 
-    Required bosses and source levels for secret stages are added separately.
+    Required bosses and source levels for secret routes are added separately.
     """
 
     display_name = "Crash 3 Levels"

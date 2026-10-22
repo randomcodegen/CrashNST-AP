@@ -32,6 +32,16 @@ namespace
                 result.insert(hub_access_item(game, area));
         return result;
     }
+    std::map<std::int64_t, unsigned> item_counts(const Json::Value &rule, const std::set<std::int64_t> &valid)
+    {
+        if (!rule.isArray() || rule.size() > 40)
+            throw std::runtime_error("Invalid alternate route requirements");
+        std::map<std::int64_t, unsigned> result;
+        for (const auto &item : rule)
+            if (!item.isInt64() || !valid.count(item.asInt64()) || ++result[item.asInt64()] > hub_item_limit(item.asInt64()))
+                throw std::runtime_error("Unknown alternate route requirement");
+        return result;
+    }
 } // namespace
 
 unsigned box_marker_color(bool spoilers, const Json::Value &location_flags, std::int64_t location)
@@ -125,6 +135,15 @@ CheckRules compile_check_rules(const std::map<std::pair<std::string, std::string
     const auto &rules = slot_data["check_requirements"];
     static const auto valid_items = known_items();
     const bool rules_valid = rules.isObject() && rules.size() == checks.size();
+    const auto &alternate_rules = slot_data["alternate_check_requirements"];
+    bool alternatives_valid = alternate_rules.isNull() || (alternate_rules.isObject() && alternate_rules.size() <= checks.size());
+    if (alternate_rules.isObject())
+    {
+        std::set<std::string> check_ids;
+        for (const auto &entry : checks) check_ids.insert(std::to_string(entry.second));
+        for (const auto &id : alternate_rules.getMemberNames())
+            alternatives_valid = alternatives_valid && check_ids.count(id);
+    }
     if (!rules_valid)
         result.error = "Invalid check_requirements. Reachable markers hidden";
     {
@@ -150,6 +169,11 @@ CheckRules compile_check_rules(const std::map<std::pair<std::string, std::string
                     if (!item.isInt64() || !valid_items.count(item.asInt64()) ||
                         ++counts[item.asInt64()] > hub_item_limit(item.asInt64()))
                         throw std::runtime_error("Unknown local collectible requirement");
+                const auto &alternatives = local_sources[id]["alternate_requirements"];
+                if (!alternatives.isNull() && (!alternatives.isArray() || alternatives.size() > 2))
+                    throw std::runtime_error("Invalid local collectible routes");
+                for (const auto &route : alternatives)
+                    item_counts(route, valid_items);
                 // reachable vanilla pickups do not activate platforms until actually collected
                 const auto item = local_sources[id]["item"].asInt64();
                 if (ingame::colored_gem_item(item))
@@ -165,7 +189,7 @@ CheckRules compile_check_rules(const std::map<std::pair<std::string, std::string
     for (const auto &[key, id] : checks)
     {
         std::map<std::int64_t, unsigned> required;
-        bool known = rules_valid && local_rules_valid;
+        bool known = rules_valid && local_rules_valid && alternatives_valid;
         if (rules_valid)
         {
             const auto &rule = rules[std::to_string(id)];
@@ -184,7 +208,22 @@ CheckRules compile_check_rules(const std::map<std::pair<std::string, std::string
         else
             known = false;
         const auto *level = level_logic(key.first);
-        result.checks.push_back({key, id, level ? level->title : key.first, std::move(required), known});
+        std::vector<std::map<std::int64_t, unsigned>> alternatives;
+        if (alternate_rules.isObject() && alternate_rules.isMember(std::to_string(id)))
+            try
+            {
+                const auto &routes = alternate_rules[std::to_string(id)];
+                if (!routes.isArray() || routes.size() > 2)
+                    throw std::runtime_error("Invalid alternate check routes");
+                for (const auto &route : routes)
+                    alternatives.push_back(item_counts(route, valid_items));
+            }
+            catch (const std::exception &error)
+            {
+                known = false;
+                result.error = error.what();
+            }
+        result.checks.push_back({key, id, level ? level->title : key.first, std::move(required), known, std::move(alternatives)});
         if (!known && result.error.empty())
             result.error = "Unknown check requirements. Affected reachable markers hidden";
     }
@@ -255,7 +294,10 @@ CheckProgress check_progress(const CheckRules &rules, const std::vector<std::pai
                                    std::all_of(bosses->second.begin(), bosses->second.end(),
                                                [&](auto boss) { return checked.count(boss) || pending.count(boss); });
         const bool final_ready = !rules.gated_finals.count(key.first) || cortex_requirements_met(rules, items, checked, pending);
-        if (known && bosses_cleared && final_ready && std::all_of(required.begin(), required.end(), [&](const auto &item) { return owned[item.first] >= item.second; }))
+        const auto satisfied = [&](const auto &needed) {
+            return std::all_of(needed.begin(), needed.end(), [&](const auto &item) { return owned[item.first] >= item.second; });
+        };
+        if (known && bosses_cleared && final_ready && (satisfied(required) || std::any_of(rule.alternatives.begin(), rule.alternatives.end(), satisfied)))
         {
             ++count.in_logic;
             if (collectible)

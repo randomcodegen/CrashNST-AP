@@ -24,6 +24,7 @@ public:
     void update(std::vector<BoxMarker> markers);
     void message(std::string text);
     void goal(const std::string &text);
+    // unlocked ordinary destinations and independent Sxxx secret portal keys
     void progress(const CheckProgress &counts, const std::map<std::string, std::string> &placements,
                   const std::set<std::string> &unlocked);
     void feed(ingame::Line line, bool popup = true);

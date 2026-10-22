@@ -3,7 +3,7 @@
 #include "hub_access.h"
 #include <json/json.h>
 
-inline constexpr int seed_protocol = 4;
+inline constexpr int seed_protocol = 5;
 using CheckKey = std::pair<std::string, std::string>;
 struct CampaignGoals
 {

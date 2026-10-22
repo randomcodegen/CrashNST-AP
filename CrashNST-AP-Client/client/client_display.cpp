@@ -226,6 +226,12 @@ void ClientRuntime::update_display(ClientTick &tick)
         for (const auto &[source, destination] : tick.placements)
             if (!level_locked(*seed, tick.items, source, tick.cleared))
                 unlocked.insert(destination);
+        for (const auto &[destination, source] : c2_secret_entrances)
+        {
+            const auto portal = "S" + std::string(destination).substr(1);
+            if (!level_locked(*seed, tick.items, portal, tick.cleared))
+                unlocked.insert(portal);
+        }
         box_markers->progress(progress, tick.placements, unlocked);
     }
     if (tick.room_ready && box_markers)

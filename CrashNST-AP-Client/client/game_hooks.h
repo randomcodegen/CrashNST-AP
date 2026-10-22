@@ -12,6 +12,9 @@ struct C2LiftProbe;
 void patch_relative_call(HANDLE process, DWORD pid, std::uintptr_t site,
                        const std::array<unsigned char, 5> &expected, const std::array<unsigned char, 5> &replacement);
 inline constexpr std::array<std::pair<const char *, const char *>, 4> secret_stages{{{"L226", "L215"}, {"L227", "L216"}, {"L331", "L314"}, {"L332", "L311"}}};
+// vanilla SecretPortal_ID order: alternate sections, then the two dedicated secret stages.
+inline constexpr std::array<std::pair<const char *, const char *>, 5> c2_secret_entrances{{
+    {"L207", "L213"}, {"L202", "L207"}, {"L214", "L217"}, {"L226", "L215"}, {"L227", "L216"}}};
 class LevelRouting
 {
 public:
@@ -24,12 +27,15 @@ public:
     unsigned start_count() const;
     unsigned secret_return_count() const;
     void secrets(const std::set<std::string> &allowed);
+    std::string last_entrance() const;
+    void resume_entrances(const std::map<char, std::string> &entrances);
 
 private:
     HANDLE process_ = nullptr;
     DWORD pid_ = 0;
     std::uintptr_t base_ = 0, remote_ = 0, variable_ = 0;
     std::vector<ZoneRecord> zones_;
+    std::map<std::string, std::uintptr_t> entrances_;
     std::array<std::array<unsigned char, 5>, 8> calls_{};
     unsigned installed_ = 0;
 };
@@ -273,15 +279,12 @@ public:
     bool update(const std::set<std::string> &allowed, bool traversal, const std::array<bool, 4> &areas);
     bool matches(const std::map<std::string, std::uintptr_t> &entities) const;
     void detach();
-    C3PlatformProbe platform_state() const;
 
 private:
     HANDLE process_ = nullptr;
     std::map<std::string, C3ButtonEventProbe> entries_;
     std::array<C3BarrierEventProbe, 4> barriers_{};
     std::uintptr_t remote_ = 0;
-    bool installed_ = false, traversal_installed_ = false, platform_installed_ = false;
-    bool platform_unlocked_ = false;
-    std::uintptr_t platform_route_ = 0, barrier_route_ = 0;
-    C3PlatformProbe platform_before_{};
+    bool installed_ = false, traversal_installed_ = false;
+    std::uintptr_t barrier_route_ = 0;
 };

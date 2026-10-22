@@ -28,7 +28,7 @@ void ClientRuntime::update_routing(ClientTick &tick)
             routing_start_count = 0;
             routing_secret_return_count = 0;
             gem_refresh.reset();
-            std::cout << "Campaign-start routing attached. All campaigns start at their default hub spawn.\n";
+            std::cout << "Campaign-start routing attached. Continue restores remembered hub entrances.\n";
             routing_error.clear();
         }
         catch (const std::exception &e)
@@ -46,6 +46,16 @@ void ClientRuntime::update_routing(ClientTick &tick)
     if (tick.room_valid && level_routing)
         try
         {
+            const auto last = level_routing->last_entrance();
+            if (!last.empty())
+                session.remember_entrance(last);
+            auto entrances = session.hub_entrances();
+            for (auto it = entrances.begin(); it != entrances.end();)
+                if (level_locked(*seed, tick.items, it->second, tick.cleared))
+                    it = entrances.erase(it);
+                else
+                    ++it;
+            level_routing->resume_entrances(entrances);
             std::set<std::string> allowed;
             for (const auto &[destination, source] : secret_stages)
                 if (tick.levels.count(destination) && !level_locked(*seed, tick.items, destination, tick.cleared))

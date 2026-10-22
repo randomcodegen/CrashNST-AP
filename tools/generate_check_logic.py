@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "CrashNST-APWorld/worlds/crash_nst"))
-from data import LEVELS, ITEMS, checks, check_requirements, CRATE_GEM_REQUIREMENTS
+from data import LEVELS, ITEMS, checks, check_requirements, CRATE_GEM_REQUIREMENTS, SECRET_CRATE_EVENTS
 
 
 def header():
@@ -18,6 +18,8 @@ def header():
             events.extend(
                 event for key, event in CRATE_GEM_REQUIREMENTS if key == level.key
             )
+            events.extend(event for key, event in sorted(SECRET_CRATE_EVENTS) if key == level.key)
+        events = list(dict.fromkeys(events))
         rules = []
         for event in events:
             ids = ", ".join(

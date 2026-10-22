@@ -33,6 +33,9 @@ static std::map<std::string, std::string> parse_placements(int mode, const Json:
     for (const auto &[destination, source] : secret_stages)
         if (selected.count(destination) && (!selected.count(source) || placements[destination] != destination))
             throw std::runtime_error("Invalid secret-stage placement");
+    for (const auto &[destination, source] : c2_secret_entrances)
+        if (selected.count(destination) && !selected.count(source))
+            throw std::runtime_error("Missing secret-entrance source level");
     std::map<std::string, std::string> result;
     std::set<std::string> destinations;
     for (const auto &source : placements.getMemberNames())
@@ -60,7 +63,18 @@ bool level_locked(const SeedConfig &seed, const std::vector<std::pair<std::int64
 {
     auto source = level.substr(0, 4);
     if (source.size() == 4 && source[0] == 'S')
+    {
         source[0] = 'L';
+        const auto route = std::find_if(c2_secret_entrances.begin(), c2_secret_entrances.end(), [&](const auto &entry) {
+            return source == entry.first;
+        });
+        if (route == c2_secret_entrances.end() || !seed.levels.count(source) || !seed.levels.count(route->second) ||
+            (seed.level_access_locks && !has_access(received, source)))
+            return true;
+        if (level_accessible(seed, received, route->second, cleared))
+            return false;
+        return level_locked(seed, received, "S" + std::string(route->second).substr(1), cleared);
+    }
     const auto placement = seed.placements.find(source);
     const auto destination = placement == seed.placements.end() ? source : placement->second;
     auto physical = source;

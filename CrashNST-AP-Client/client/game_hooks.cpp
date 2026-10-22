@@ -7,6 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include <iterator>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -480,6 +481,31 @@ namespace
         done.push_back(branch(0x84));
         emit({0x48, 0x3b, 0xdf});
         done.push_back(branch(0x84)); // restart/checkpoint retains its destination
+        // native secret selectors distinguish the three fixed alternate sections from shuffled hub portals
+        if (int_getter)
+        {
+            emit({0x49, 0x3b, 0x7c, 0x24, 40});
+            std::vector<std::size_t> ordinary{branch(0x85)};
+            emit({0x49, 0x8b, 0x4c, 0x24, 112, 0x48, 0x85, 0xc9});
+            ordinary.push_back(branch(0x84));
+            emit({0x48, 0xb8}); imm(int_getter);
+            emit({0xff, 0xd0, 0xff, 0xc8, 0x83, 0xf8, 2});
+            ordinary.push_back(branch(0x87));
+            emit({0x49, 0x3b, 0x9c, 0xc4, 0x30, 0x0c, 0, 0}); // target at state+3120+selector*8
+            ordinary.push_back(branch(0x85));
+            emit({0x49, 0x83, 0x7c, 0x24, 8, 0});
+            const auto origin = branch(0x85);
+            emit({0x49, 0x89, 0x7c, 0x24, 8});
+            bind(origin, c.size());
+            // a return to this secret room needs its actual stage for the native portal-exit animation
+            emit({0x49, 0x3b, 0x7c, 0x24, 8});
+            const auto other_campaign = branch(0x85);
+            emit({0x49, 0x89, 0x9c, 0x24, 144, 0, 0, 0, 0x49, 0x89, 0xbc, 0x24, 152, 0, 0, 0});
+            bind(other_campaign, c.size());
+            emit({0x49, 0x89, 0x5c, 0x24, 16});
+            done.push_back(jump());
+            for (auto at : ordinary) bind(at, c.size());
+        }
         // secret transfers keep the game's secret-exit discovery. denied destinations return to the entrance's hub.
         emit({0x49, 0x8d, 0x8c, 0x24, 0, 11, 0, 0, 0xba, 4, 0, 0, 0});
         const auto secret_loop = c.size();
@@ -594,6 +620,7 @@ namespace
         }
         emit({0x48, 0x8b, 0x41, 16, 0x49, 0x89, 0x44, 0x24, 8, 0x49, 0x89, 0x84, 0x24, 152, 0, 0, 0,
               0x48, 0x8b, 0x01, 0x49, 0x89, 0x84, 0x24, 144, 0, 0, 0,
+              0x49, 0x89, 0x84, 0x24, 176, 0, 0, 0, // latest ordinary entrance, sampled for local persistence
               0x48, 0x8b, 0x59, 8, 0x49, 0x89, 0x5c, 0x24, 16});
         const auto finish = c.size();
         for (auto at : done)
@@ -785,9 +812,9 @@ namespace
         return c;
     }
 
-    // campaign menu loads always start at the default hub spawn, with no previous entrance history
+    // campaign menu loads restore the remembered physical entrance in the selected campaign's hub
     std::vector<unsigned char> campaign_start_stub(std::uintptr_t state, std::uintptr_t getter,
-                                                   std::uintptr_t zone_vtable)
+                                                   std::uintptr_t zone_vtable, std::uintptr_t int_getter = 0)
     {
         std::vector<unsigned char> c;
         const auto emit = [&](std::initializer_list<unsigned char> bytes)
@@ -808,7 +835,7 @@ namespace
                 fallback.push_back(branch(0x85)); // a shorter path fails at its terminator before any further byte is read
             }
         };
-        emit({0x53, 0x48, 0x83, 0xec, 32, 0x48, 0xb8});
+        emit({0x53, 0x48, 0x83, 0xec, 48, 0x48, 0xb8});
         imm(getter);
         emit({0xff, 0xd0, 0x48, 0xbb});
         imm(state);
@@ -826,7 +853,8 @@ namespace
             std::vector<std::size_t> next;
             const auto prefix = "crash" + std::to_string(game) + "/";
             path(prefix.c_str(), next);
-            emit({0x48, 0x8b, 0x4b, static_cast<unsigned char>(24 + game * 8), 0xe9, 0, 0, 0, 0});
+            emit({0x48, 0x8b, 0x4b, static_cast<unsigned char>(24 + game * 8),
+                  0x4c, 0x8b, 0x83, static_cast<unsigned char>(176 + game * 8), 0, 0, 0, 0xe9, 0, 0, 0, 0});
             selected.push_back(c.size() - 4);
             for (auto at : next)
                 bind(at, c.size());
@@ -840,14 +868,36 @@ namespace
         emit({0x48, 0x39, 0x11});
         done.push_back(branch(0x85));
         emit({0x48, 0x8b, 0xc1, 0x48, 0xc7, 0x43, 8, 0, 0, 0, 0, 0x48, 0xc7, 0x43, 16, 0, 0, 0, 0,
-              0x48, 0xc7, 0x83, 144, 0, 0, 0, 0, 0, 0, 0, 0x48, 0xc7, 0x83, 152, 0, 0, 0, 0, 0, 0, 0,
-              0xff, 0x83, 136, 0, 0, 0}); // Acknowledgement counts actual redirects, not attachment.
+              0x48, 0xc7, 0x83, 144, 0, 0, 0, 0, 0, 0, 0, 0x48, 0xc7, 0x83, 152, 0, 0, 0, 0, 0, 0, 0});
+        emit({0x4d, 0x85, 0xc0});
+        std::vector<std::size_t> no_resume{branch(0x84)};
+        emit({0x49, 0x39, 0x10});
+        no_resume.push_back(branch(0x85));
+        if (int_getter)
+        {
+            // C2 secret-room selectors keep their saved spawn
+            emit({0x48, 0x3b, 0x43, 40});
+            const auto other_game = branch(0x85);
+            emit({0x48, 0x8b, 0x4b, 112, 0x48, 0x85, 0xc9});
+            const auto no_selector = branch(0x84);
+            emit({0x48, 0x89, 0x44, 0x24, 32, 0x4c, 0x89, 0x44, 0x24, 40, 0x48, 0xb8});
+            imm(int_getter);
+            emit({0xff, 0xd0, 0xff, 0xc8, 0x83, 0xf8, 4,
+                  0x48, 0x8b, 0x44, 0x24, 32, 0x4c, 0x8b, 0x44, 0x24, 40});
+            no_resume.push_back(branch(0x86));
+            bind(other_game, c.size());
+            bind(no_selector, c.size());
+        }
+        emit({0x4c, 0x89, 0x83, 144, 0, 0, 0, 0x48, 0x89, 0x83, 152, 0, 0, 0});
+        for (auto at : no_resume)
+            bind(at, c.size());
+        emit({0xff, 0x83, 136, 0, 0, 0}); // Acknowledgement counts actual redirects, not attachment.
         for (auto at : done)
         {
             const auto delta = static_cast<std::int32_t>(c.size() - at - 4);
             std::memcpy(c.data() + at, &delta, 4);
         }
-        emit({0x48, 0x83, 0xc4, 32, 0x5b, 0xc3});
+        emit({0x48, 0x83, 0xc4, 48, 0x5b, 0xc3});
         return c;
     }
 
@@ -869,17 +919,22 @@ LevelRouting::LevelRouting(DWORD pid, const std::map<std::string, std::string> &
         zones_ = read_zone_registry(process_);
         const auto zone_for = [&](const std::string &key)
         {
-            std::uintptr_t found = 0;
+            const ZoneRecord *found = nullptr;
             for (const auto &zone : zones_)
                 if (zone.key == key && zone.path.find("intro") == std::string::npos)
                 {
-                    if (found && found != zone.address)
-                        throw std::runtime_error("Ambiguous level destination: " + key);
-                    found = zone.address;
+                    if (found && found->address != zone.address)
+                    {
+                        std::ostringstream message;
+                        message << "Ambiguous level destination: " << key << " [" << found->path << " @ 0x"
+                                << std::hex << found->address << "] and [" << zone.path << " @ 0x" << zone.address << ']';
+                        throw std::runtime_error(message.str());
+                    }
+                    found = &zone;
                 }
             if (!found)
                 throw std::runtime_error("Level destination missing: " + key);
-            return found;
+            return found->address;
         };
         // verified executable offsets. this order also determines calls_ and restoration in detach()
         const std::array<std::uintptr_t, 8> sites{{
@@ -954,12 +1009,13 @@ LevelRouting::LevelRouting(DWORD pid, const std::map<std::string, std::string> &
         if (code.size() > 3072)
             throw std::runtime_error("Secret-fade routing overlaps campaign-start code");
         code.resize(3072, 0xcc);
-        const auto start = campaign_start_stub(state(), base_ + 0x520430, base_ + 0x13d0fb0);
+        const auto start = campaign_start_stub(state(), base_ + 0x520430, base_ + 0x13d0fb0, base_ + 0x4e4710);
         code.insert(code.end(), start.begin(), start.end());
         if (code.size() > 4096)
             throw std::runtime_error("Entrance routing code exceeds its executable region");
         std::array<unsigned char, 4096> data{};
         // separate RW page: count/enabled at +0/+4, return hub/destination +8/+16, campaign hubs +32/+40/+48
+        // +176 publishes the last ordinary entrance. +184/+192/+200 hold permitted Continue entrances
         const auto put = [&](unsigned off, std::uintptr_t v)
         { std::memcpy(data.data() + off, &v, 8); };
         unsigned count = 0;
@@ -971,6 +1027,7 @@ LevelRouting::LevelRouting(DWORD pid, const std::map<std::string, std::string> &
             if (source[1] == '1' && !c1_entrance_progression_valid(source, read<int>(process_, zone_for(source) + 344)))
                 throw std::runtime_error("C1 physical entrance has an invalid game progression index: " + source);
             put(256 + count * 24, zone_for(source));
+            entrances_.emplace(source, zone_for(source));
             put(264 + count * 24, zone_for(destination));
             put(272 + count * 24, zone_for("L" + source.substr(1, 1) + "00"));
             ++count;
@@ -999,9 +1056,12 @@ LevelRouting::LevelRouting(DWORD pid, const std::map<std::string, std::string> &
             data[off + 28] = destination[1] == '2';
         }
         // ECrashSecretZones 1..5 identify the five C2 secret-warp-room exits
-        const std::array<const char *, 5> secret_sources{{"L213", "L207", "L217", "L215", "L216"}};
-        for (unsigned i = 0; i < secret_sources.size(); ++i)
-            put(3072 + i * 8, zone_for(secret_sources[i]));
+        for (unsigned i = 0; i < c2_secret_entrances.size(); ++i)
+        {
+            put(3072 + i * 8, zone_for(c2_secret_entrances[i].second));
+            if (i < 3)
+                put(3120 + i * 8, zone_for(c2_secret_entrances[i].first));
+        }
         SIZE_T copied = 0;
         if (!WriteProcessMemory(process_, reinterpret_cast<void *>(remote_), code.data(), code.size(), &copied) || copied != code.size() ||
             !WriteProcessMemory(process_, reinterpret_cast<void *>(state()), data.data(), data.size(), &copied) || copied != data.size() ||
@@ -1096,6 +1156,35 @@ bool LevelRouting::bind_secret(const std::array<unsigned char, 48> &handle)
 }
 unsigned LevelRouting::start_count() const { return read<unsigned>(process_, state() + 136); }
 unsigned LevelRouting::secret_return_count() const { return read<unsigned>(process_, state() + 160); }
+
+std::string LevelRouting::last_entrance() const
+{
+    const auto last = read<std::uintptr_t>(process_, state() + 176);
+    if (!last)
+        return {};
+    for (const auto &[key, zone] : entrances_)
+        if (zone == last)
+            return key;
+    throw std::runtime_error("Last entrance is outside the routing table");
+}
+void LevelRouting::resume_entrances(const std::map<char, std::string> &entrances)
+{
+    std::array<std::uintptr_t, 3> desired{};
+    for (const auto &[game, key] : entrances)
+    {
+        const auto found = entrances_.find(key);
+        if (game < '1' || game > '3' || key.size() != 4 || key[1] != game || found == entrances_.end())
+            throw std::runtime_error("Continue entrance is outside the routing table");
+        desired[game - '1'] = found->second;
+    }
+    for (unsigned i = 0; i < desired.size(); ++i)
+    {
+        const auto address = state() + 184 + i * 8;
+        const auto current = read<std::uintptr_t>(process_, address);
+        if (current != desired[i])
+            write(process_, address, current, desired[i]);
+    }
+}
 
 void LevelRouting::secrets(const std::set<std::string> &allowed)
 {
@@ -2319,16 +2408,12 @@ C3HubAccess::C3HubAccess(DWORD pid, const std::map<std::string, std::uintptr_t> 
         }
         const auto &anchor = *entities.begin();
         barriers_ = probe_c3_barriers_at(process_, anchor.second, anchor.first);
-        platform_before_ = probe_c3_platform_at(process_, anchor.second, anchor.first);
-        remote_ = reinterpret_cast<std::uintptr_t>(VirtualAllocEx(process_, nullptr, probes.size() * 512 + 7 * 256,
+        remote_ = reinterpret_cast<std::uintptr_t>(VirtualAllocEx(process_, nullptr, probes.size() * 512 + 4 * 256,
                                                                   MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
         if (!remote_)
             throw std::runtime_error("Cannot allocate C3 script-event copies");
         auto copied = c3_button_event_chain(probes, remote_);
 
-        platform_route_ = remote_ + copied.size();
-        const auto platform_event = c3_platform_event_copy(probes.front(), barriers_[0], platform_before_, platform_route_, remote_ + 320);
-        copied.insert(copied.end(), platform_event.begin(), platform_event.end());
         barrier_route_ = remote_ + copied.size();
         const auto gates = c3_barrier_event_chain(probes.front(), barriers_, barrier_route_);
         copied.insert(copied.end(), gates.begin(), gates.end());
@@ -2337,8 +2422,6 @@ C3HubAccess::C3HubAccess(DWORD pid, const std::map<std::string, std::uintptr_t> 
         for (const auto &[key, probe] : entries_)
             if (probe_c3_button_events_at(process_, probe.entity, key).meta != probe.meta)
                 throw std::runtime_error("C3 hub reloaded during hub-access hook installation");
-        if (probe_c3_platform_at(process_, anchor.second, anchor.first).entities != platform_before_.entities)
-            throw std::runtime_error("C3 secret platform owners changed during attachment");
         const auto &first = probes.front();
         // activation/visibility share the owner-test chain. contact uses its parallel chain at +320.
         try
@@ -2411,7 +2494,7 @@ bool C3HubAccess::update(const std::set<std::string> &allowed, bool traversal, c
         return false;
     for (const auto &[key, before] : entries_)
     {
-        const auto current = probe_c3_button_events_at(process_, before.entity, key, remote_, platform_installed_ ? platform_route_ : 0);
+        const auto current = probe_c3_button_events_at(process_, before.entity, key, remote_);
         if (current.script != before.script || current.meta != before.meta || current.entry_output != before.entry_output ||
             current.original_output != before.original_output || current.contact_output != before.contact_output ||
             current.original_contact != before.original_contact)
@@ -2424,14 +2507,6 @@ bool C3HubAccess::update(const std::set<std::string> &allowed, bool traversal, c
         if (barriers[i].entity != barriers_[i].entity || barriers[i].meta != barriers_[i].meta ||
             barriers[i].entry_output != barriers_[i].entry_output || barriers[i].disable != barriers_[i].disable)
             throw std::runtime_error("C3 traversal script graph reloaded. Rediscovery required");
-    if (platform_route_)
-    {
-        const auto current = platform_state();
-        if (current.entities != platform_before_.entities)
-            throw std::runtime_error("C3 secret platform owners reloaded. Rediscovery required");
-        if (current.active == std::array<unsigned char, 3>{1, 1, 0})
-            platform_unlocked_ = true;
-    }
     // per-button +32 selects enable (+160) or hide (+384). the parallel contact test invokes activation (+240).
     unsigned i = 0;
     for (const auto &[key, probe] : entries_)
@@ -2458,30 +2533,6 @@ bool C3HubAccess::update(const std::set<std::string> &allowed, bool traversal, c
                       << (contact_desired ? "enabled" : "blocked") << ".\n"
                       << std::flush;
         }
-    }
-    // bootstrap once. the game path scripts then own platform enable/disable
-    const bool platform = platform_route_ && traversal && !platform_unlocked_;
-    if (platform != platform_installed_)
-    {
-        const auto before = platform_installed_ ? platform_route_ : remote_ + 320;
-        const auto after = platform ? platform_route_ : remote_ + 320;
-        try
-        {
-            write(process_, first.contact_output, before, after);
-        }
-        catch (...)
-        {
-            try
-            {
-                restore_boss_route(process_, first.contact_output, after, before);
-            }
-            catch (...)
-            {
-                std::cerr << "C3 secret platform route rollback could not be verified. Restart NST.\n";
-            }
-            throw;
-        }
-        platform_installed_ = platform;
     }
     for (unsigned i = 0; i < barriers_.size(); ++i)
     {
@@ -2527,7 +2578,7 @@ void C3HubAccess::detach()
     // revalidate current owners/graphs first. dont restore into freed or reloaded asset memory
     for (const auto &[key, before] : entries_)
     {
-        const auto current = probe_c3_button_events_at(process_, before.entity, key, remote_, platform_installed_ ? platform_route_ : 0);
+        const auto current = probe_c3_button_events_at(process_, before.entity, key, remote_);
         if (current.meta != before.meta || current.script != before.script || current.entry_output != before.entry_output)
             throw std::runtime_error("C3 graph changed before restoration");
     }
@@ -2548,17 +2599,8 @@ void C3HubAccess::detach()
         const auto &first = anchor.second;
         for (unsigned i = 0; i < 2; ++i)
             restore_boss_route(process_, first.visibility_outputs[i], remote_, first.original_visibility[i]);
-        restore_boss_route(process_, first.contact_output, platform_installed_ ? platform_route_ : remote_ + 320, first.original_contact);
-        platform_installed_ = false;
+        restore_boss_route(process_, first.contact_output, remote_ + 320, first.original_contact);
         restore_boss_route(process_, first.entry_output, remote_, first.original_output);
         installed_ = false;
     }
-}
-
-C3PlatformProbe C3HubAccess::platform_state() const
-{
-    if (!platform_route_)
-        throw std::logic_error("C3 secret platform adapter is not enabled");
-    const auto &anchor = *entries_.begin();
-    return probe_c3_platform_at(process_, anchor.second.entity, anchor.first, false);
 }

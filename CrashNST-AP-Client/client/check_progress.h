@@ -35,6 +35,7 @@ struct CheckRules
         std::string title;
         std::map<std::int64_t, unsigned> required;
         bool known;
+        std::vector<std::map<std::int64_t, unsigned>> alternatives;
     };
     std::vector<Rule> checks;
     std::map<std::int64_t, std::int64_t> local_reward_items;

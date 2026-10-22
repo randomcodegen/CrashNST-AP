@@ -69,7 +69,7 @@ void ClientRuntime::initialize_ap()
     deferred_receipt_bytes = 0;
     startup_connection.retry(server);
     AP_Init(server.c_str(), "Crash Bandicoot N. Sane Trilogy", slot.c_str(), connection_password.c_str());
-    AP_NetworkVersion client_version{1, 0, 3};
+    AP_NetworkVersion client_version{1, 0, 4};
     AP_SetClientVersion(&client_version);
     AP_EnableQueueItemRecvMsgs(false);
     AP_SetDeathLinkSupported(true);

@@ -184,6 +184,7 @@ void Session::open(const std::filesystem::path &directory, const std::string &se
             locations(data_["pending"]);
             locations(data_["checked"]);
             local_collectibles();
+            hub_entrances();
             if (!location_flags().isObject() || location_flags().size() > max_checks)
                 throw std::runtime_error("Invalid saved location flags");
             for (const auto &key : location_flags().getMemberNames())
@@ -352,6 +353,7 @@ void Session::reset_server_state()
     data_["items"] = data_["pending"] = Json::Value(Json::arrayValue);
     data_["local_collectibles"] = Json::Value(Json::arrayValue);
     data_["bindings"] = Json::Value(Json::objectValue);
+    data_.removeMember("hub_entrances");
     data_["filler_cursor"] = 0u;
     data_["server_reset_pending"] = true;
     dirty_ = true;
@@ -395,6 +397,45 @@ std::set<std::int64_t> Session::queue(const std::set<std::int64_t> &incoming)
         throw;
     }
     return added;
+}
+std::map<char, std::string> Session::hub_entrances() const
+{
+    std::map<char, std::string> result;
+    if (!data_.isMember("hub_entrances"))
+        return result;
+    const auto &saved = data_["hub_entrances"];
+    if (!saved.isObject() || saved.size() > 3)
+        throw std::runtime_error("Invalid saved hub entrances");
+    for (const auto &game : saved.getMemberNames())
+    {
+        const auto &value = saved[game];
+        const auto entrance = value.isString() ? value.asString() : std::string();
+        if (game.size() != 1 || game[0] < '1' || game[0] > '3' || entrance.size() != 4 ||
+            (entrance[0] != 'L' && entrance[0] != 'B') || entrance[1] != game[0] ||
+            !data_["slot_data"]["level_placements"].isMember(entrance))
+            throw std::runtime_error("Invalid saved hub entrance");
+        result.emplace(game[0], entrance);
+    }
+    return result;
+}
+void Session::remember_entrance(const std::string &entrance)
+{
+    if (!ready() || entrance.size() != 4 || entrance[1] < '1' || entrance[1] > '3' ||
+        (entrance[0] != 'L' && entrance[0] != 'B') || !data_["slot_data"]["level_placements"].isMember(entrance))
+        throw std::runtime_error("Cannot remember an entrance outside this AP room");
+    const std::string game(1, entrance[1]);
+    const auto previous = data_.get("hub_entrances", Json::Value(Json::objectValue));
+    if (previous[game] == entrance)
+        return;
+    data_["hub_entrances"][game] = entrance;
+    dirty_ = true;
+    try { flush(); }
+    catch (...)
+    {
+        data_["hub_entrances"] = previous;
+        dirty_ = true;
+        throw;
+    }
 }
 void Session::flush()
 {

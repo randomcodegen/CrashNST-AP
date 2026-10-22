@@ -49,11 +49,82 @@ namespace ingame
         key[0] = static_cast<char>(std::toupper(key[0]));
         return key;
     }
+    bool initialize_c3_platform(const C3ButtonEventProbe &button, const C3PlatformProbe &platform,
+                                std::pair<std::uintptr_t, std::uintptr_t> &initialized)
+    {
+        using namespace engine_memory;
+        if (!button.script || !platform.entities[2])
+            throw std::runtime_error("C3 platform script context is unavailable");
+        const auto identity = std::make_pair(platform.entities[2], button.script);
+        if (initialized == identity)
+            return false;
+        if (platform.active[2])
+        {
+            alignas(8) std::array<unsigned char, 72> method{};
+            if (button.meta < 42340 || !read(button.meta - 42340 + 51828, method))
+                throw std::runtime_error("C3 platform method context is unavailable");
+            alignas(8) std::array<unsigned char, 3 * 256> nodes{};
+            const auto actions = c3_platform_event_copy(button, platform, reinterpret_cast<Address>(nodes.data()), 0);
+            std::copy(actions.begin(), actions.end(), nodes.begin());
+            const auto address = reinterpret_cast<Address>(method.data());
+            const auto pointer = [&](unsigned offset, Address value) { std::memcpy(method.data() + offset, &value, 8); };
+            pointer(16, address + 24);
+            pointer(56, address + 64);
+            pointer(64, reinterpret_cast<Address>(nodes.data()));
+            // the method executor owns a complete frame and runs these stack-backed actions before returning
+            reinterpret_cast<void (*)(Address, Address, unsigned, Address)>(base() + 0xc988c0)(address, button.script, 0, 0);
+        }
+        // after bootstrap the path scripts own the lift, including closing the floor while it moves
+        if (value<unsigned>(platform.entities[2] + 56) & 0x100)
+            return false;
+        initialized = identity;
+        return platform.active[2] != 0;
+    }
     namespace
     {
         using namespace engine_memory;
-        FunctionHook hub_bool_hook, hub_int_hook, hub_gate_query_hook;
+        FunctionHook hub_bool_hook, hub_int_hook, hub_gate_query_hook, c2_secret_entry_hook;
         std::atomic<unsigned> hub_areas{0x7fff};
+        struct SecretReturn
+        {
+            Address script = 0, owner = 0, gate = 0, meta = 0;
+        };
+        std::array<SecretReturn, 5> secret_returns{};
+
+        Address c2_secret_entry_gate(Address node, Address context)
+        {
+            const auto instance = value<Address>(context), meta = value<Address>(instance + 56);
+            if (typed(instance, 0x13bbbd0) && typed(meta, 0x1745d78) &&
+                string(value<Address>(meta + 16)) == "Scripts.Graph.common_C2_WarpRoom_LevelPortal" &&
+                value<unsigned short>(meta + 90) == 836 && node == meta - 144092 + 155996 &&
+                typed(node, 0x1759ef0) && typed(meta - 144092 + 138076, 0x17a1858) &&
+                value<unsigned short>(meta - 144092 + 138076 + 24) == 392)
+            {
+                const auto owner = value<Address>(instance + 24);
+                const auto name = string(value<Address>(owner + 128));
+                constexpr std::array<const char *, 5> secrets{{"L202_SnowGo_Secret_Portal", "L207_AirCrash_Secret_Portal",
+                    "L214_RoadToRuin_Secret_Portal", "L226_TotallyBear_Secret_Portal", "L227_TotallyFly_Secret_Portal"}};
+                const auto secret = std::find(secrets.begin(), secrets.end(), name);
+                if (typed(owner, 0x14c8ef8) && secret != secrets.end())
+                {
+                    const auto slab = meta - 144092, gate = value<Address>(instance + 104);
+                    // reload can start a saved secret-return sequence with no previous level to finish it
+                    if (!value<Address>(instance + 136) && value<unsigned char>(instance + 760) == 1 &&
+                        typed(gate, 0x1759da0) && value<int>(gate + 16) == 0 && !value<unsigned char>(gate + 20) &&
+                        value<unsigned short>(slab + 146332 + 24) == 136 &&
+                        typed(slab + 137228, 0x17a1858) && value<unsigned short>(slab + 137228 + 24) == 760 &&
+                        typed(slab + 159268, 0x1759fa8) && value<Address>(slab + 159268 + 16) == slab + 156020)
+                    {
+                        secret_returns[secret - secrets.begin()] = {instance, owner, gate, meta};
+                        return 0;
+                    }
+                    // contact during hub initialization must not consume the gate before entry is ready
+                    if (!value<unsigned char>(instance + 392))
+                        return 0;
+                }
+            }
+            return reinterpret_cast<Address (*)(Address, Address)>(c2_secret_entry_hook.original)(node, context);
+        }
 
         void hub_gate_query(Address context, Address args, Address outputs)
         {
@@ -111,6 +182,9 @@ namespace ingame
                         !std::strcmp(owner + 7, "_WarpLift"))
                     {
                         const auto floor = unsigned(owner[6] - '0');
+                        // floor 1 descends to the secret room using its normal discovery flag.
+                        if (floor == 1 && offset == 162)
+                            return value<unsigned char>(instance + offset) != 0;
                         const auto area = offset == 161 ? floor + 1 : floor - 1;
                         return area >= 1 && area <= 5 && (hub_areas.load(std::memory_order_relaxed) & (1u << (area + 4)));
                     }
@@ -129,6 +203,11 @@ namespace ingame
                 const auto meta = *reinterpret_cast<const Address *>(instance + 56);
                 const auto name = meta ? *reinterpret_cast<const char *const *>(meta + 16) : nullptr;
                 const auto offset = *reinterpret_cast<const unsigned short *>(field + 24);
+                // without a physical return, the saved vanilla progression must use the graph's default spawn (1)
+                if (name && !std::strcmp(name, "Scripts.Graph.common_Crash1_Hub_Manager") &&
+                    field == meta - 142276 + 113076 &&
+                    !value<Address>(instance + value<unsigned short>(meta - 142276 + 147404 + 24)))
+                    return 1;
                 // Only this navigation comparison uses the count. The separate initialization count must stay complete.
                 if (name && !std::strcmp(name, "Scripts.Graph.common_Crash1_Hub_Manager") &&
                     field == meta - 142276 + 120244 && offset == 152)
@@ -399,6 +478,49 @@ namespace ingame
                 return false;
             const auto controls = value<Address>(input + 88);
             return typed(controls, 0x13eb4b8) && value<int>(controls + 16) == 0 && value<int>(invulnerable + 16) == 0;
+        }
+        __declspec(noinline) void update_c2_secret_returns(unsigned campaign)
+        {
+            if (campaign != 2)
+            {
+                secret_returns = {};
+                return;
+            }
+            const auto actor = player();
+            if (!death_controls_ready(actor, true))
+                return;
+            std::array<float, 3> position{};
+            if (!read(actor + 32, position) ||
+                !std::all_of(position.begin(), position.end(), [](float f) { return std::isfinite(f); }))
+                return;
+            for (auto &pending : secret_returns)
+            {
+                if (!pending.script)
+                    continue;
+                const auto [script, owner, gate, meta] = pending;
+                const auto slab = meta - 144092;
+                if (!typed(script, 0x13bbbd0) || !typed(owner, 0x14c8ef8) || !typed(gate, 0x1759da0) ||
+                    !typed(meta, 0x1745d78) || value<Address>(script + 24) != owner ||
+                    value<Address>(script + 56) != meta || value<Address>(script + 104) != gate ||
+                    value<Address>(script + 136) || value<int>(gate + 16) || value<unsigned char>(gate + 20) ||
+                    !value<unsigned char>(script + 760) || !typed(slab + 159268, 0x1759fa8) ||
+                    value<Address>(slab + 159268 + 16) != slab + 156020)
+                {
+                    pending = {};
+                    continue;
+                }
+                std::array<float, 3> center{};
+                if (!value<unsigned char>(script + 392) || !read(owner + 32, center) ||
+                    !std::all_of(center.begin(), center.end(), [](float f) { return std::isfinite(f); }))
+                    continue;
+                // All five secret triggers have radius 150. wait outside twice that radius with free controls.
+                if (std::hypot(position[0] - center[0], position[1] - center[1]) <= 300)
+                    continue;
+                pending = {};
+                Address context = script;
+                reinterpret_cast<Address (*)(Address, Address)>(base() + 0xcb3a60)(slab + 159268,
+                                                                                 reinterpret_cast<Address>(&context));
+            }
         }
         std::atomic_uint active_style{0};
         using Matrix = std::array<float, 16>;
@@ -1177,15 +1299,18 @@ namespace ingame
         {
             static std::uint64_t next = 0, pending_triggers = 0;
             static std::set<std::pair<Address, Address>> platform_spawn_attempts;
-            if (!state.c3_buttons_ready || hub_campaign(zone) != 3)
+            static std::pair<Address, Address> initialized_platform{};
+            if (hub_campaign(zone) != 3)
             {
+                next = 0;
                 pending_triggers = 0;
                 platform_spawn_attempts.clear();
+                initialized_platform = {};
                 return;
             }
             if (GetTickCount64() < next)
                 return;
-            next = GetTickCount64() + 250;
+            next = GetTickCount64() + (initialized_platform.first ? 250 : 16);
             const auto refresh_triggers = pending_triggers;
             pending_triggers = 0;
             if (!code_matches(0xc988c0, std::array<unsigned char, 16>{0x4c, 0x8b, 0xdc, 0x49, 0x89, 0x6b, 0x18, 0x56,
@@ -1227,6 +1352,30 @@ namespace ingame
                 bool moved = false, visibility_changed = false;
                 for (const auto component : components)
                 {
+                    if (name == "C3_Hub_Portal_Button01" && initialized_platform.second != component &&
+                        typed(component, 0x13bbbd0) && value<Address>(component + 24) == entity &&
+                        (value<unsigned>(component + 32) & 1) && !(value<unsigned>(component + 32) & 24) &&
+                        (value<unsigned char>(component + 40) & 1) &&
+                        string(value<Address>(value<Address>(component + 56) + 16)) == "Scripts.Graph.common_C3_Hub_Portal_Button")
+                    {
+                        try
+                        {
+                            const auto platform = probe_c3_platform_at(GetCurrentProcess(), entity, "L301", false);
+                            const auto meta = value<Address>(component + 56);
+                            const auto route = value<Address>(meta - 42340 + 51900 + 48);
+                            const auto button = probe_c3_button_events_at(GetCurrentProcess(), entity, "L301", route);
+                            if (initialize_c3_platform(button, platform, initialized_platform))
+                                std::cout << "Crash 3 secret elevator unlocked automatically.\n" << std::flush;
+                        }
+                        catch (const std::runtime_error &)
+                        {
+                            // portal discovery can still be loading or replacing the shared graph, retry after validation succeeds
+                            if (state.c3_buttons_ready)
+                                throw;
+                        }
+                    }
+                    if (!state.c3_buttons_ready)
+                        continue;
                     const auto method = c3_button_refresh_method(component, entity);
                     if (!method)
                         continue;
@@ -1336,6 +1485,12 @@ namespace ingame
             throw std::runtime_error("Hub graph dispatcher differs from the verified build");
         hub_gate_query_hook.attach(0x831da0, {0x48, 0x89, 0x5c, 0x24, 8, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57,
                                             0x48, 0x83, 0xec, 0x20}, reinterpret_cast<Address>(hub_gate_query));
+        if (!c2_secret_entry_hook.installed &&
+            !code_matches(0xcb3a60, std::array<unsigned char, 13>{0x48, 0x83, 0xec, 0x28, 0x48, 0x8b, 0x49, 0x10,
+                                                               0x48, 0x85, 0xc9, 0x74, 0x2c}))
+            throw std::runtime_error("C2 portal gate-open method differs from the verified build");
+        c2_secret_entry_hook.attach(0xcabcc0, {0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57,
+                                              0x48, 0x83, 0xec, 0x20}, reinterpret_cast<Address>(c2_secret_entry_gate));
     }
     void configure_movement(const std::map<std::string, unsigned> &styles)
     {
@@ -1397,6 +1552,7 @@ namespace ingame
     void update_gameplay(Shared &state)
     {
         const auto marker_world = value<Address>(base() + 0x1a64690);
+        update_c2_secret_returns(hub_campaign(string(value<Address>(marker_world + 184))));
         update_c3_buttons(state, string(value<Address>(marker_world + 184)));
         update_collectibles(state, string(value<Address>(marker_world + 184)));
         update_tints(state, string(value<Address>(marker_world + 184)));

@@ -241,8 +241,9 @@ namespace ingame
             const auto &entry = state.entrances[i];
             if (campaign < 1 || campaign > 3 || entry.hub[1] != '0' + campaign || !entry.source[0] || !seen.insert(entry.source).second)
                 continue;
-            auto row = title(entry.source);
-            if (std::strcmp(entry.source, entry.destination))
+            const bool secret = entry.source[0] == 'S';
+            auto row = secret ? title(entry.destination) + " (Secret entrance)" : title(entry.source);
+            if (!secret && std::strcmp(entry.source, entry.destination))
                 row += " -> " + title(entry.destination);
             for (unsigned level = 0; level < state.level_count; ++level)
                 if (!std::strcmp(state.levels[level].key, entry.destination))

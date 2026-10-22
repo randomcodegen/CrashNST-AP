@@ -68,8 +68,10 @@ Secret destinations include required source levels automatically.
 - `death_link` is optional and defaults off. Deaths in bonus rounds do not send DeathLink.
 - `crashsanity` is experimental and defaults off.
 
+Secret-route logic requires **Snow Go's red gem → Air Crash**, **Air Crash's box gem → Bear Down**, and **Road to Ruin's box gem → Diggin' It**.
+
 Totally Bear/Fly, Hot Coco and Eggipus Rex require their usual secret paths and the chosen access locks.  
-CB3 relic-room entrances follow AP access locks instead of vanilla relic requirements.
+The CB3 secret-room elevator opens automatically while AP is active, without relics or touching a level button first. Its level entrances still follow AP access locks.
 
 With Hub Area Locks enabled, each **Crash 1 - Progressive Island Access** opens the next island (two copies total).  
 Each **Crash 2 - Progressive Elevator Access** opens the next warp-room floor (four copies total).  
@@ -78,7 +80,7 @@ Crash 3 uses a separate **Hub Section Unlock** for each gated section.
 Boss defeats do not open hub areas.
 
 Leaving a level returns to the physical entrance used, including shuffled levels in another campaign.
-Starting a campaign without entrance history uses its default hub spawn.
+Continue remembers the last hub entrance used in each campaign for this seed and slot, including cross-campaign shuffled levels.
 
 Filler rewards are Wumpa Fruit and 1-Ups. Rewards received on hubs wait until gameplay and apply once.
 

@@ -283,9 +283,10 @@ void BoxMarkers::progress(const CheckProgress &counts, const std::map<std::strin
     for (const auto &anchor : entrance_anchors())
     {
         const auto index = anchor.hub == "L300" ? c3_index++ : -1;
+        const bool secret = anchor.level[0] == 'S';
         const auto found = placements.find(anchor.level);
-        const auto &destination = found == placements.end() ? anchor.level : found->second;
-        if (!unlocked.count(destination))
+        const auto destination = secret ? "L" + anchor.level.substr(1) : found == placements.end() ? anchor.level : found->second;
+        if (!unlocked.count(secret ? anchor.level : destination))
             continue;
         auto &entry = shared_->entrances[shared_->entrance_count++];
         if (index < 0 || entry.c3_button != index || std::strcmp(entry.hub, anchor.hub.c_str()))

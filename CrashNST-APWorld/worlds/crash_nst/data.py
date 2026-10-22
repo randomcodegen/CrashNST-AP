@@ -8,7 +8,7 @@ from pkgutil import get_data
 
 GAME = "Crash Bandicoot N. Sane Trilogy"
 BASE = 0xCB0000
-PROTOCOL = 4
+PROTOCOL = 5
 
 
 @dataclass(frozen=True)
@@ -139,6 +139,9 @@ STARTS = ("L101", "L102", "L201", "L202", "L301", "L302")
 FINALS = ("B106", "B205", "B305")
 # these stages keep their entrances when regular hub levels are shuffled
 SECRET_SOURCES = {"L226": "L215", "L227": "L216", "L331": "L314", "L332": "L311"}
+# these entrances enter another section of an existing stage, and are never shuffled
+ALTERNATE_SOURCES = {"L202": "L207", "L207": "L213", "L214": "L217"}
+SECRET_CHECKS = frozenset({("L202", "extra_gem"), ("L207", "gem"), ("L214", "gem")})
 COLORS = {
     1: ("Blue", "Green", "Orange", "Purple", "Red", "Yellow"),
     2: ("Blue", "Green", "Purple", "Red", "Yellow"),
@@ -489,11 +492,18 @@ CRATE_GEM_REQUIREMENTS = {
     for crate in CRATES
     if "gem_requirements" in crate
 }
+SECRET_CRATE_EVENTS = frozenset(
+    (crate["level"], crate_event(crate))
+    for crate in CRATES
+    if crate.get("secret_source")
+)
 
 
 def requirements(level, event):
     """return required items"""
     required = [f"{level.name} - Access"]
+    if (level.key, event) in SECRET_CHECKS or (level.key, event) in SECRET_CRATE_EVENTS:
+        required.extend(requirements(BY_KEY[ALTERNATE_SOURCES[level.key]], "clear"))
     if level.key in SECRET_SOURCES:
         required.extend(requirements(BY_KEY[SECRET_SOURCES[level.key]], "clear"))
         if level.key == "L332":
@@ -541,6 +551,54 @@ def entrance_requirements(level, active_levels):
 def check_requirements(level, event, active_levels):
     needed = requirements(level, event)
     return tuple(dict.fromkeys((*entrance_requirements(level, active_levels), *needed)))
+
+
+def entry_routes(level, placements, hub_locks, level_locks):
+    routes = [
+        lock_requirements(
+            requirements(level, "clear"), placements, hub_locks, level_locks
+        )
+    ]
+    if level.key in ALTERNATE_SOURCES:
+        for source in entry_routes(
+            BY_KEY[ALTERNATE_SOURCES[level.key]], placements, hub_locks, level_locks
+        ):
+            needed = Counter(source)
+            if level_locks:
+                needed[f"{level.name} - Access"] = 1
+            routes.append(tuple(needed.elements()))
+    return tuple(dict.fromkeys(routes))
+
+
+def check_routes(level, event, placements, hub_locks, level_locks):
+    normal = lock_requirements(
+        requirements(level, event), placements, hub_locks, level_locks
+    )
+    secret = (level.key, event) in SECRET_CHECKS or (
+        level.key,
+        event,
+    ) in SECRET_CRATE_EVENTS
+    # Snow Go's alternate entrance joins late: it reaches the crystal/exit, not its full main-path box run or clock
+    alternate = level.key in ALTERNATE_SOURCES and (
+        secret
+        or event in ("clear", "crystal")
+        or (level.key != "L202" and event != "relic")
+    )
+    if not alternate:
+        return (normal,)
+    routes = [] if secret else [normal]
+    extras = [
+        name for name in requirements(level, event) if not name.endswith(" - Access")
+    ]
+    for entry in entry_routes(
+        BY_KEY[ALTERNATE_SOURCES[level.key]], placements, hub_locks, level_locks
+    ):
+        needed = Counter(entry)
+        needed |= Counter(extras)
+        if level_locks:
+            needed[f"{level.name} - Access"] = 1
+        routes.append(tuple(needed.elements()))
+    return tuple(dict.fromkeys(routes))
 
 
 def level_pools(value):

@@ -330,9 +330,6 @@ void ClientRuntime::update_c3_access(ClientTick &tick, const C3HubState &hub)
             {
                 c3_access = std::make_unique<C3HubAccess>(pid, c3_entities);
                 std::cout << "C3 activation scripts attached. Barrier contact opens hub paths.\n" << std::flush;
-                std::cout << "Secret platform adapter attached. Touch an unlocked hub button once before using the "
-                             "central platform.\n"
-                          << std::flush;
             }
             std::array<bool, 4> areas{};
             for (unsigned i = 0; i < areas.size(); ++i)

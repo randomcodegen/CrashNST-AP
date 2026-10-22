@@ -316,9 +316,10 @@ struct C3PlatformProbe
 {
     std::array<std::uintptr_t, 3> entities{}; // outbound owner, return owner, floor cap
     std::array<unsigned char, 3> active{};
+    std::uintptr_t false_value = 0;
+    std::array<unsigned char, 48> enabled_property{};
 };
 C3PlatformProbe probe_c3_platform_at(HANDLE process, std::uintptr_t button, const std::string &key, bool placed = true);
 std::vector<unsigned char> c3_platform_event_copy(const C3ButtonEventProbe &button,
-                                                  const C3BarrierEventProbe &barrier,
                                                   const C3PlatformProbe &platform,
                                                   std::uintptr_t remote, std::uintptr_t continuation);

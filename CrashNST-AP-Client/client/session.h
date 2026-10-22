@@ -29,6 +29,8 @@ public:
     void finish_server_reset();
     std::set<std::int64_t> queue(const std::set<std::int64_t> &locations);
     void flush();
+    std::map<char, std::string> hub_entrances() const;
+    void remember_entrance(const std::string &entrance);
     bool ready() const { return lease_ != INVALID_HANDLE_VALUE; }
     std::string seed() const { return data_["seed"].asString(); }
     int team() const { return data_["team"].asInt(); }
