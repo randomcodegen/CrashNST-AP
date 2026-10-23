@@ -1,6 +1,7 @@
 #include "seed_config.h"
 #include "crate_catalogue.h"
 #include "game_hooks.h"
+#include "collectibles.h"
 #include <algorithm>
 #include <stdexcept>
 std::int64_t access_item_id(const std::string &level)
@@ -23,13 +24,24 @@ static std::set<std::string> parse_selected_levels(const Json::Value &root)
 }
 
 static std::map<std::string, std::string> parse_placements(int mode, const Json::Value &placements,
-                                                           const std::set<std::string> &selected)
+                                                           const std::set<std::string> &selected,
+                                                           const Json::Value &hub_campaigns)
 {
     if (mode < 0 || mode > 2)
         throw std::runtime_error("Invalid level_shuffle slot data");
     if (!placements.isObject() || placements.size() != selected.size() ||
         Json::FastWriter().write(placements).size() > 8192)
         throw std::runtime_error("Invalid level_placements slot data");
+    std::set<char> campaigns;
+    if (!hub_campaigns.isNull())
+    {
+        if (!hub_campaigns.isArray() || hub_campaigns.empty() || hub_campaigns.size() > 3)
+            throw std::runtime_error("Invalid selected_campaigns slot data");
+        for (const auto &game : hub_campaigns)
+            if (!game.isUInt() || game.asUInt() < 1 || game.asUInt() > 3 ||
+                !campaigns.insert('0' + game.asUInt()).second)
+                throw std::runtime_error("Invalid selected_campaigns slot data");
+    }
     for (const auto &[destination, source] : secret_stages)
         if (selected.count(destination) && (!selected.count(source) || placements[destination] != destination))
             throw std::runtime_error("Invalid secret-stage placement");
@@ -41,7 +53,13 @@ static std::map<std::string, std::string> parse_placements(int mode, const Json:
     for (const auto &source : placements.getMemberNames())
     {
         const auto &destination = placements[source];
-        if (!selected.count(source) || !destination.isString() || !selected.count(destination.asString()) ||
+        const bool secret = std::any_of(secret_stages.begin(), secret_stages.end(),
+                                       [&](const auto &entry) { return source == entry.first; });
+        if (!access_item_id(source) || (!selected.count(source) && !ingame::collectible_spec(source.c_str())) ||
+            (mode != 2 && !selected.count(source)) ||
+            (campaigns.empty() ? !selected.count(source) : (!secret && !campaigns.count(source[1]))) ||
+            (secret && destination != source) ||
+            !destination.isString() || !selected.count(destination.asString()) ||
             !destinations.insert(destination.asString()).second ||
             ((source[0] == 'B' || !mode) && destination.asString() != source) ||
             (source[0] == 'L' && destination.asString()[0] != 'L') ||
@@ -76,7 +94,9 @@ bool level_locked(const SeedConfig &seed, const std::vector<std::pair<std::int64
         return level_locked(seed, received, "S" + std::string(route->second).substr(1), cleared);
     }
     const auto placement = seed.placements.find(source);
-    const auto destination = placement == seed.placements.end() ? source : placement->second;
+    if (placement == seed.placements.end())
+        return true;
+    const auto &destination = placement->second;
     auto physical = source;
     for (const auto &[secret, parent] : secret_stages)
         if (source == secret)
@@ -272,7 +292,7 @@ SeedConfig::SeedConfig(const Json::Value &data)
     checks = parse_checks(data["checks"]);
     levels = parse_selected_levels(data["selected_levels"]);
     shuffle = data["level_shuffle"].asInt();
-    placements = parse_placements(shuffle, data["level_placements"], levels);
+    placements = parse_placements(shuffle, data["level_placements"], levels, data["selected_campaigns"]);
     goals = parse_goals(data["goal_levels"], levels, checks, data["victory_goal"]);
     rules = compile_check_rules(checks, data, levels);
     const auto &styles = data["movement_styles"];

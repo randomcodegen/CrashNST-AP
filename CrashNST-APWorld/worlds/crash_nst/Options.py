@@ -35,10 +35,10 @@ class LevelAccessLocks(DefaultOnToggle):
     display_name = "Level Access Locks"
 
 
-class Campaigns(Choice):
-    """Choose one, two, or all three Crash campaigns."""
+class ActiveHubs(Choice):
+    """Choose which games' hubs and bosses are used. Does not filter the level pool."""
 
-    display_name = "Campaigns"
+    display_name = "Active Hubs"
     option_all = 0
     option_crash_1 = 1
     option_crash_2 = 2
@@ -49,50 +49,26 @@ class Campaigns(Choice):
     default = option_all
 
 
-class Crash1Levels(Range):
-    """Number of regular Crash 1 levels to randomly select from the level pool.
+class LevelCount(Range):
+    """Total regular levels to draw from Level Pool, including secret stages.
 
-    Required bosses and source levels for secret routes are added separately.
+    Limited by the pool and available hub entrances. Bosses are added separately.
     """
 
-    display_name = "Crash 1 Levels"
-    range_start = 2
-    range_end = 27
-    default = 27
-
-
-class Crash2Levels(Range):
-    """Number of regular Crash 2 levels to randomly select from the level pool.
-
-    Required bosses and source levels for secret routes are added separately.
-    """
-
-    display_name = "Crash 2 Levels"
-    range_start = 2
-    range_end = 27
-    default = 27
-
-
-class Crash3Levels(Range):
-    """Number of regular Crash 3 levels to randomly select from the level pool.
-
-    Required bosses and source levels for secret routes are added separately.
-    """
-
-    display_name = "Crash 3 Levels"
-    range_start = 2
-    range_end = 31
-    default = 31
+    display_name = "Level Count"
+    range_start = 1
+    range_end = 85
+    default = 85
 
 
 class StartingLevels(Range):
-    """Number of starting level entrances per enabled campaign.
+    """Number of starting level entrances per active hub.
 
-    Fills the earliest hub areas available in the selected level pool first,
+    Fills the earliest hub areas available among the selected entrances first,
     then unlocks more if needed.
     """
 
-    display_name = "Starting Levels per Campaign"
+    display_name = "Starting Levels per Hub"
     range_start = 1
     range_end = 31
     default = 2
@@ -101,11 +77,11 @@ class StartingLevels(Range):
 class Goal(Choice):
     """Choose what the player must complete to win.
 
-    All Cortex requires defeating Cortex in every enabled campaign.
-    Single-Cortex goals require that campaign to be enabled.
+    All Cortex requires defeating Cortex in every active hub game.
+    Single-Cortex goals require that game's hub to be active.
     Cortex entrances follow the chosen hub area and level access locks.
 
-    Level clears count distinct regular levels from the selected pool, across all enabled campaigns.
+    Level clears count distinct regular levels from the selected destination pool.
 
     Token hunt replaces a percentage of filler items with AP Tokens.
     Collecting the required percentage of those tokens wins.
@@ -218,8 +194,9 @@ class RelicChecks(Range):
 class LevelShuffle(Choice):
     """Shuffle regular level destinations. Bosses and secret stages keep their entrances.
 
-    Hot Coco, Eggipus Rex, Totally Bear and Totally Fly require their vanilla path
-    and their own Access item. Their vanilla path levels are included automatically.
+    Across Campaigns can place any pool level in any active hub.
+    Off and Within Campaign use only levels belonging to the active hubs.
+    Secret stages keep their vanilla paths and need their source levels in the pool.
     """
 
     display_name = "Level Placement Shuffle"
@@ -282,11 +259,11 @@ class BoxItemSpoilers(Toggle):
 
 
 class LevelPool(OptionDict):
-    """Available levels under crash_1, crash_2 and crash_3.
+    """Allowed levels, grouped under crash_1, crash_2 and crash_3.
 
-    Use level titles, full names or level keys. The level count randomly selects
-    from this pool using the seed. List order does not affect the selection.
-    Omitted campaigns use their full pool.
+    Remove unwanted levels. An empty list or omitted game excludes its levels.
+    Use titles, full names or level keys.
+    Secret routes also need their source levels in the pool.
     """
 
     display_name = "Available Level Pool"
@@ -305,7 +282,7 @@ class LevelPool(OptionDict):
 
 @dataclass
 class CrashOptions(PerGameCommonOptions):
-    campaigns: Campaigns
+    active_hubs: ActiveHubs
     hub_area_locks: HubAreaLocks
     level_access_locks: LevelAccessLocks
     goal: Goal
@@ -315,9 +292,7 @@ class CrashOptions(PerGameCommonOptions):
     token_percentage: TokenPercentage
     token_required_percentage: TokenRequiredPercentage
     level_pool: LevelPool
-    crash1_levels: Crash1Levels
-    crash2_levels: Crash2Levels
-    crash3_levels: Crash3Levels
+    level_count: LevelCount
     starting_levels: StartingLevels
     white_gem_checks: WhiteGemChecks
     colored_gem_checks: ColoredGemChecks

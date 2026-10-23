@@ -225,6 +225,31 @@ def lock_requirements(required, placements, hub_locks, level_locks):
     return tuple(result.elements())
 
 
+def validate_level_placements(selected, placements, campaigns, shuffle):
+    """destinations are unique. ordinary physical entrances belong to enabled hubs."""
+    if (type(shuffle) is not int or shuffle not in (0, 1, 2)
+            or type(placements) is not dict or len(placements) != len(selected)
+            or any(key not in BY_KEY or type(value) is not str or value not in selected
+                   for key, value in placements.items())
+            or set(placements.values()) != set(selected)):
+        raise ValueError("Invalid NST tracker level placements")
+    for source, destination in placements.items():
+        secret = source in SECRET_SOURCES
+        if ((secret and destination != source)
+                or (not secret and BY_KEY[source].campaign not in campaigns)
+                or (source.startswith("B") and source != destination)
+                or (source.startswith("L") and not destination.startswith("L"))
+                or (shuffle != 2 and source not in selected)
+                or (shuffle == 0 and source != destination)
+                or (shuffle == 1 and source[1] != destination[1])):
+            raise ValueError("Invalid NST tracker entrance or shuffle mode")
+    if any(key in selected and (source not in selected or placements.get(key) != key)
+           for key, source in SECRET_SOURCES.items()):
+        raise ValueError("Secret stages need their original source levels and entrances")
+    if any(key in selected and source not in selected for key, source in ALTERNATE_SOURCES.items()):
+        raise ValueError("Alternate entrances need their source levels")
+
+
 def validate_victory_goal(selected, bosses, config):
     """validate the victory condition against the selected pool"""
     if type(config) is dict and config.get("type") == "cortex_requirements":
@@ -610,8 +635,8 @@ def level_pools(value):
     result = {}
     for campaign, names in value.items():
         game = int(campaign[-1])
-        if type(names) is not list or not names:
-            raise ValueError(f"level_pool.{campaign} must be a nonempty list of levels")
+        if type(names) is not list:
+            raise ValueError(f"level_pool.{campaign} must be a list of levels")
         levels = [level for level in LEVELS if level.campaign == game]
         aliases = {
             alias.casefold(): level.key
@@ -628,8 +653,6 @@ def level_pools(value):
             if key in keys:
                 raise ValueError(f"Duplicate level in level_pool.{campaign}: {name!r}")
             keys.add(key)
-        if not any(key.startswith("L") for key in keys):
-            raise ValueError(f"level_pool.{campaign} needs at least one regular level")
         result[game] = [level for level in levels if level.key in keys]
     return result
 

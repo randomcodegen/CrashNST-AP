@@ -259,7 +259,7 @@ void ClientRuntime::update_c1(ClientTick &tick)
             std::set<std::string> allowed;
             bool traversal = false;
             if (tick.room_ready)
-                for (const auto &key : tick.levels)
+                for (const auto &[key, destination] : tick.placements)
                 {
                     if (key.size() != 4 || key[1] != '1')
                         continue;

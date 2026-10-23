@@ -1,6 +1,7 @@
 #include "check_progress.h"
 #include "ingame_protocol.h"
 #include "hub_access.h"
+#include "game_hooks.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -80,7 +81,11 @@ std::array<LevelProgress, 3> campaign_progress(const CheckProgress &progress,
         entrances[destination] = source;
     for (const auto &[destination, level] : progress.levels)
     {
-        const auto found = entrances.find(destination);
+        auto parent = destination;
+        for (const auto &[secret, source] : secret_stages)
+            if (destination == secret)
+                parent = source;
+        const auto found = entrances.find(parent);
         const auto &source = found == entrances.end() ? destination : found->second;
         if (source.size() != 4 || source[1] < '1' || source[1] > '3')
             continue;

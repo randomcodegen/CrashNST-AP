@@ -52,11 +52,11 @@ Press **F2** for unlocked entrances, grouped by physical hub campaign.
 
 ## World options
 
-Secret destinations include required source levels automatically.
-
-- Choose any campaign combination, level pool and level counts.
-- `starting_levels`: starting entrances per enabled campaign, from 1–31 (default 2), capped at the selected regular entrances. Fill the earliest available hub areas first. Later areas start unlocked only if the requested count needs them or the pool has no earlier entrances. The selected pool is preserved.
-- `level_shuffle`: `off`, `within_campaign` or `across_campaigns`.
+- `active_hubs`: which games' hubs and bosses are used. Choose `all`, `crash_1`, `crash_2`, `crash_3`, `crash_1_2`, `crash_1_3` or `crash_2_3`.
+- `level_count`: total regular levels to draw from the pool. The pool and available hub entrances limit the result.
+- `level_pool`: allowed levels under `crash_1`, `crash_2` and `crash_3`. Remove unwanted levels.
+- `starting_levels`: starting entrances per active hub, capped at the selected regular entrances. Fills the earliest available hub areas first. Later areas start unlocked only if the requested count needs them or the pool has no earlier entrances.
+- `level_shuffle`: `off`, `within_campaign` or `across_campaigns`. Across Campaigns can draw any pool level into any active hub. The other modes use only levels belonging to active hubs.
 - `boxsanity`: 0–100% of the boxes turn into ap locations. There are 5291 boxes across 85 stages.
 - `white_gem_checks`, `colored_gem_checks`, `crystal_checks`, `relic_checks`: percentages of collectible locations to select as AP checks. Unselected collectibles stay vanilla or are overwritten by collectible_rewards.
 - `collectible_rewards`: per-category `randomized`, `vanilla` or `precollected`. Randomized: Default shuffle behaviour. Vanilla: selected checks keep their normal items. Precollected: randomizes selected checks and gives the unselected collectibles from the start.
@@ -68,9 +68,21 @@ Secret destinations include required source levels automatically.
 - `death_link` is optional and defaults off. Deaths in bonus rounds do not send DeathLink.
 - `crashsanity` is experimental and defaults off.
 
+For a C1 hub with destinations drawn from the whole trilogy:
+
+```yaml
+active_hubs: crash_1
+level_count: 20
+level_shuffle: across_campaigns
+goal: cortex_1
+```
+
+This draws up to 20 regular levels from the trilogy into C1's overworld.  
+
 Secret-route logic requires **Snow Go's red gem → Air Crash**, **Air Crash's box gem → Bear Down**, and **Road to Ruin's box gem → Diggin' It**.
 
 Totally Bear/Fly, Hot Coco and Eggipus Rex require their usual secret paths and the chosen access locks.  
+When a secret route is selected, its source levels are selected with it and count toward `level_count`. If a required source was removed from `level_pool`, that route is skipped instead of adding the source back.  
 The CB3 secret-room elevator opens automatically while AP is active, without relics or touching a level button first. Its level entrances still follow AP access locks.
 
 With Hub Area Locks enabled, each **Crash 1 - Progressive Island Access** opens the next island (two copies total).  

@@ -279,12 +279,21 @@ void BoxMarkers::progress(const CheckProgress &counts, const std::map<std::strin
         ingame::copy(level.collectible_counts, p.collectible_text());
     }
     shared_->entrance_count = 0;
+    std::set<char> hubs;
+    for (const auto &[source, destination] : placements)
+        if (std::none_of(secret_stages.begin(), secret_stages.end(),
+                         [&](const auto &entry) { return source == entry.first; }))
+            hubs.insert(source[1]);
     int c3_index = 0;
     for (const auto &anchor : entrance_anchors())
     {
         const auto index = anchor.hub == "L300" ? c3_index++ : -1;
+        if (!hubs.count(anchor.hub[1]))
+            continue;
         const bool secret = anchor.level[0] == 'S';
         const auto found = placements.find(anchor.level);
+        if (!secret && found == placements.end())
+            continue;
         const auto destination = secret ? "L" + anchor.level.substr(1) : found == placements.end() ? anchor.level : found->second;
         if (!unlocked.count(secret ? anchor.level : destination))
             continue;

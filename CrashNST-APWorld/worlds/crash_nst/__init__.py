@@ -37,6 +37,7 @@ from .data import (
     lock_requirements,
     hub_area,
     valid_requirement_counts,
+    validate_level_placements,
 )
 
 
@@ -67,7 +68,7 @@ class CrashWorld(World):
     item_name_to_id = ITEMS
     location_name_to_id = LOCATIONS
     ut_can_gen_without_yaml = True
-    required_client_version = (1, 0, 4)
+    required_client_version = (1, 0, 5)
 
     def create_item(self, name):
         classification = (
@@ -88,7 +89,9 @@ class CrashWorld(World):
         return slot_data
 
     def lock_requirements(self, names):
-        return lock_requirements(names, self.level_placements, self.hub_area_locks, self.level_access_locks)
+        return lock_requirements(
+            names, self.level_placements, self.hub_area_locks, self.level_access_locks
+        )
 
     def requirements(self, level, event):
         return self.lock_requirements(requirements(level, event))
@@ -97,22 +100,46 @@ class CrashWorld(World):
         return self.requirements(level, event)
 
     def check_requirements(self, level, event):
-        return check_routes(level, event, self.level_placements, self.hub_area_locks, self.level_access_locks)[0]
+        return check_routes(
+            level,
+            event,
+            self.level_placements,
+            self.hub_area_locks,
+            self.level_access_locks,
+        )[0]
 
     def location_rule(self, level, event, address):
         if self.tracker_slot is None:
-            routes = check_routes(level, event, self.level_placements, self.hub_area_locks, self.level_access_locks)
+            routes = check_routes(
+                level,
+                event,
+                self.level_placements,
+                self.hub_area_locks,
+                self.level_access_locks,
+            )
         elif address in self.tracker_rules:
-            routes = [self.tracker_rules[address], *(
-                tuple(self.item_id_to_name[item] for item in needed)
-                for needed in self.tracker_slot.get("alternate_check_requirements", {}).get(str(address), [])
-            )]
+            routes = [
+                self.tracker_rules[address],
+                *(
+                    tuple(self.item_id_to_name[item] for item in needed)
+                    for needed in self.tracker_slot.get(
+                        "alternate_check_requirements", {}
+                    ).get(str(address), [])
+                ),
+            ]
         else:
             source = self.tracker_slot["local_reward_sources"][str(address)]
-            routes = [tuple(self.item_id_to_name[item] for item in needed)
-                      for needed in [source["requirements"], *source.get("alternate_requirements", [])]]
+            routes = [
+                tuple(self.item_id_to_name[item] for item in needed)
+                for needed in [
+                    source["requirements"],
+                    *source.get("alternate_requirements", []),
+                ]
+            ]
         routes = tuple(Counter(needed) for needed in routes)
-        return lambda state: any(state.has_all_counts(needed, self.player) for needed in routes)
+        return lambda state: any(
+            state.has_all_counts(needed, self.player) for needed in routes
+        )
 
     def _load_tracker_slot(self):
         """Rebuild tracker state from the server slot without rerolling the seed."""
@@ -137,25 +164,15 @@ class CrashWorld(World):
             selected, self.goal_levels, slot.get("victory_goal")
         )
         self.enabled_campaigns = tuple(slot["selected_campaigns"])
-        if self.enabled_campaigns not in CAMPAIGN_SETS.values() or any(
-            level.campaign not in self.enabled_campaigns for level in self.active_levels
-        ):
+        if self.enabled_campaigns not in CAMPAIGN_SETS.values():
             raise ValueError("Invalid NST tracker campaigns")
         self.level_placements = slot["level_placements"]
-        if set(self.level_placements) != set(selected) or set(
-            self.level_placements.values()
-        ) != set(selected):
-            raise ValueError("Invalid NST tracker level placements")
-        if any(
-            source not in selected or self.level_placements[key] != key
-            for key, source in SECRET_SOURCES.items()
-            if key in selected
-        ):
-            raise ValueError(
-                "Secret stages need their original source levels and entrances"
-            )
-        if any(key in selected and source not in selected for key, source in ALTERNATE_SOURCES.items()):
-            raise ValueError("Alternate entrances need their source levels")
+        validate_level_placements(
+            selected,
+            self.level_placements,
+            self.enabled_campaigns,
+            slot["level_shuffle"],
+        )
         catalogue = {
             str(address): {"level": level.key, "event": event}
             for level in self.active_levels
@@ -186,7 +203,9 @@ class CrashWorld(World):
                     type(item) is not int or item not in self.item_id_to_name
                     for item in needed
                 )
-                or not valid_requirement_counts(self.item_id_to_name[item] for item in needed)
+                or not valid_requirement_counts(
+                    self.item_id_to_name[item] for item in needed
+                )
                 for needed in rules.values()
             )
         ):
@@ -198,17 +217,33 @@ class CrashWorld(World):
         alternatives = slot.get("alternate_check_requirements", {})
         if type(alternatives) is not dict or set(alternatives) - set(server_checks):
             raise ValueError("Invalid NST alternate check routes")
+
         def valid_alternatives(routes):
-            return (type(routes) is list and len(routes) <= 2 and all(
-                type(needed) is list and len(needed) <= 40
-                and all(type(item) is int and item in self.item_id_to_name for item in needed)
-                and valid_requirement_counts(self.item_id_to_name[item] for item in needed)
-                for needed in routes))
+            return (
+                type(routes) is list
+                and len(routes) <= 2
+                and all(
+                    type(needed) is list
+                    and len(needed) <= 40
+                    and all(
+                        type(item) is int and item in self.item_id_to_name
+                        for item in needed
+                    )
+                    and valid_requirement_counts(
+                        self.item_id_to_name[item] for item in needed
+                    )
+                    for needed in routes
+                )
+            )
+
         if any(not valid_alternatives(routes) for routes in alternatives.values()):
             raise ValueError("Invalid NST alternate check requirements")
         self.active_checks = {int(address) for address in server_checks}
-        if self.victory_goal.get("requirements", {}).get("token_hunt", 0) > len(self.active_checks) or (
-            self.victory_goal["type"] == "token_hunt" and self.victory_goal["required"] > len(self.active_checks)
+        if self.victory_goal.get("requirements", {}).get("token_hunt", 0) > len(
+            self.active_checks
+        ) or (
+            self.victory_goal["type"] == "token_hunt"
+            and self.victory_goal["required"] > len(self.active_checks)
         ):
             raise ValueError("Token target exceeds selected checks")
         self.active_crates = [
@@ -237,7 +272,9 @@ class CrashWorld(World):
                     type(item) is not int or item not in self.item_id_to_name
                     for item in source["requirements"]
                 )
-                or not valid_requirement_counts(self.item_id_to_name[item] for item in source["requirements"])
+                or not valid_requirement_counts(
+                    self.item_id_to_name[item] for item in source["requirements"]
+                )
                 or not valid_alternatives(source.get("alternate_requirements", []))
             ):
                 raise ValueError("Invalid NST tracker local collectible")
@@ -259,50 +296,21 @@ class CrashWorld(World):
         self.shuffled_collectibles = {}
         self.precollected_collectibles = {}
         self.locked_collectibles = {}
-        self.enabled_campaigns = CAMPAIGN_SETS[self.options.campaigns.value]
+        self.enabled_campaigns = CAMPAIGN_SETS[self.options.active_hubs.value]
         pools = level_pools(self.options.level_pool.value)
         self.available_level_pool = {
-            f"crash_{game}": [
-                level.key for level in pools.get(game, LEVELS) if level.campaign == game
-            ]
-            for game in self.enabled_campaigns
+            f"crash_{game}": [level.key for level in pools.get(game, ())]
+            for game in (1, 2, 3)
         }
-        counts = {
-            1: self.options.crash1_levels.value,
-            2: self.options.crash2_levels.value,
-            3: self.options.crash3_levels.value,
-        }
-        regular = {
-            game: [
-                level
-                for level in pools.get(game, LEVELS)
-                if level.campaign == game and level.key.startswith("L")
-            ]
-            for game in self.enabled_campaigns
-        }
-        counts = {
-            game: min(counts[game], len(levels)) for game, levels in regular.items()
-        }
-        chosen = {
-            level.key
-            for game, levels in regular.items()
-            for level in self.random.sample(levels, counts[game])
-        }
-        sources = {**SECRET_SOURCES, **ALTERNATE_SOURCES}
-        while any(key in chosen and source not in chosen for key, source in sources.items()):
-            chosen.update(source for key, source in sources.items() if key in chosen)
+        self.level_placements = self.select_pool_placements(pools)
+        chosen = set(self.level_placements.values())
         chosen.update(key for key in FINALS if int(key[1]) in self.enabled_campaigns)
-        for game, levels in regular.items():
-            if game in pools:
-                chosen.update(
-                    level.key for level in pools[game] if level.key.startswith("B")
-                )
-            elif counts[game] == len(levels):
-                chosen.update(
-                    level.key
-                    for level in LEVELS
-                    if level.campaign == game and level.key.startswith("B")
-                )
+        chosen.update(
+            level.key
+            for game in self.enabled_campaigns
+            for level in pools.get(game, ())
+            if level.key.startswith("B")
+        )
         goal = self.options.goal.value
         requirements = self.options.cortex_requirements.value
         if requirements and goal > 3:
@@ -318,7 +326,7 @@ class CrashWorld(World):
             BY_KEY[key].campaign not in self.enabled_campaigns
             for key in self.goal_levels
         ):
-            raise ValueError("The goal campaign must be enabled")
+            raise ValueError("The goal hub must be active")
         if all_bosses:
             goal_campaigns = {BY_KEY[key].campaign for key in self.goal_levels}
             self.goal_levels = [
@@ -335,8 +343,11 @@ class CrashWorld(World):
             )
         if goal <= 3:
             victory = {
-                "type": "cortex_last" if self.options.require_all_bosses.value == 2
-                else "all_bosses" if all_bosses else "cortex",
+                "type": (
+                    "cortex_last"
+                    if self.options.require_all_bosses.value == 2
+                    else "all_bosses" if all_bosses else "cortex"
+                ),
                 "required": 0,
             }
         elif goal == 4:
@@ -348,13 +359,19 @@ class CrashWorld(World):
             # create_items sets the final token target once filler capacity is known.
             victory = {"type": "token_hunt", "required": 1}
         if requirements:
-            victory = {"type": "cortex_requirements", "required": 0,
-                       "boss_mode": victory["type"], "requirements": {
-                           name: self.options.goal_count.value if name == "level_clears" else 1
-                           for name in sorted(requirements)
-                       }}
+            victory = {
+                "type": "cortex_requirements",
+                "required": 0,
+                "boss_mode": victory["type"],
+                "requirements": {
+                    name: self.options.goal_count.value if name == "level_clears" else 1
+                    for name in sorted(requirements)
+                },
+            }
         self.victory_goal = validate_victory_goal(chosen, self.goal_levels, victory)
-        self.level_placements = {level.key: level.key for level in self.active_levels}
+        self.level_placements.update(
+            (key, key) for key in chosen if key.startswith("B")
+        )
         self.movement_styles = (
             {
                 level.key: 1
@@ -371,36 +388,14 @@ class CrashWorld(World):
             if self.options.crashsanity.value
             else {}
         )
-        shuffle = self.options.level_shuffle.value
-        if shuffle:
-            groups = (
-                [self.enabled_campaigns]
-                if shuffle == 2
-                else [(game,) for game in self.enabled_campaigns]
-            )
-            for campaigns in groups:
-                entrances = [
-                    level.key
-                    for level in self.active_levels
-                    if level.key.startswith("L")
-                    and level.key not in SECRET_SOURCES
-                    and level.campaign in campaigns
-                ]
-                destinations = sorted(
-                    entrances,
-                    key=lambda key: hashlib.sha256(
-                        f"{self.multiworld.seed}/{self.player}/level_shuffle/{shuffle}/{key}".encode()
-                    ).digest(),
-                )
-                self.level_placements.update(zip(entrances, destinations))
         self.starting_levels = []
         for game in self.enabled_campaigns:
             entrances = [
-                level.key
-                for level in self.active_levels
-                if level.campaign == game
-                and level.key.startswith("L")
-                and level.key not in SECRET_SOURCES
+                key
+                for key in self.level_placements
+                if BY_KEY[key].campaign == game
+                and key.startswith("L")
+                and key not in SECRET_SOURCES
             ]
             entrances.sort(key=hub_area)
             # fill the earliest hub areas before granting access to later areas
@@ -466,6 +461,84 @@ class CrashWorld(World):
         self.active_crates = [pool[key] for key in sample]
         self.active_checks.update(crate["id"] for crate in self.active_crates)
 
+    def select_pool_placements(self, pools):
+        """draw one total level selection and fit it into the active hubs"""
+        shuffle = self.options.level_shuffle.value
+        entrances = {}
+        for game in self.enabled_campaigns:
+            keys = [
+                level.key
+                for level in LEVELS
+                if level.campaign == game
+                and level.key.startswith("L")
+                and level.key not in SECRET_SOURCES
+            ]
+            entrances[game] = self.random.sample(keys, len(keys))
+        entrances = [
+            keys[index]
+            for index in range(max(map(len, entrances.values())))
+            for keys in entrances.values()
+            if index < len(keys)
+        ]
+        candidates = [
+            level.key
+            for game in (1, 2, 3)
+            for level in pools.get(game, ())
+            if level.key.startswith("L")
+            and (shuffle == 2 or level.campaign in self.enabled_campaigns)
+        ]
+        allowed = set(candidates)
+        ranked = self.random.sample(candidates, len(candidates))
+        # when hubs are the limit, reserve space for secret paths before ordinary stages
+        if self.options.level_count.value > len(entrances):
+            ranked.sort(key=lambda key: key not in SECRET_SOURCES)
+        sources = {**SECRET_SOURCES, **ALTERNATE_SOURCES}
+        chosen = set()
+        for key in ranked:
+            family = {key}
+            while any(
+                member in sources and sources[member] not in family for member in family
+            ):
+                family.update(
+                    sources[member] for member in tuple(family) if member in sources
+                )
+            combined = chosen | family
+            if (
+                family <= allowed
+                and len(combined) <= self.options.level_count.value
+                and len(combined - SECRET_SOURCES.keys()) <= len(entrances)
+            ):
+                chosen = combined
+        if not chosen:
+            raise ValueError(
+                "Level Pool has no playable selection. Keep secret-route source levels "
+                "in the pool, increase Level Count, or use Across Campaigns shuffle."
+            )
+        placements = {key: key for key in sorted(chosen)}
+        if shuffle:
+            groups = (
+                [self.enabled_campaigns]
+                if shuffle == 2
+                else [(game,) for game in self.enabled_campaigns]
+            )
+            for games in groups:
+                destinations = [
+                    key
+                    for key in chosen
+                    if key not in SECRET_SOURCES
+                    and (shuffle == 2 or int(key[1]) in games)
+                ]
+                destinations.sort(
+                    key=lambda key: hashlib.sha256(
+                        f"{self.multiworld.seed}/{self.player}/level_shuffle/{shuffle}/{key}".encode()
+                    ).digest()
+                )
+                physical = entrances if shuffle == 2 else sorted(destinations)
+                for destination in destinations:
+                    placements.pop(destination)
+                placements.update(zip(physical, destinations))
+        return placements
+
     def create_regions(self):
         menu = Region("Menu", self.player, self.multiworld)
         self.multiworld.regions.append(menu)
@@ -475,19 +548,27 @@ class CrashWorld(World):
         for level in self.active_levels:
             region = Region(level.name, self.player, self.multiworld)
             self.multiworld.regions.append(region)
-            entry_rule = self.location_rule(level, "clear", EVENT_IDS[level.key, "clear"])
+            entry_rule = self.location_rule(
+                level, "clear", EVENT_IDS[level.key, "clear"]
+            )
             bosses = tuple(
                 f"{BY_KEY[key].name} Defeated"
                 for key in self.goal_levels
-                if self.victory_goal.get("boss_mode", self.victory_goal["type"]) == "cortex_last" and level.key in FINALS
-                and level.key in self.goal_levels and key not in FINALS
+                if self.victory_goal.get("boss_mode", self.victory_goal["type"])
+                == "cortex_last"
+                and level.key in FINALS
+                and level.key in self.goal_levels
+                and key not in FINALS
                 and BY_KEY[key].campaign == level.campaign
             )
             menu.connect(
                 region,
                 name=f"{BY_KEY[entrances[level.key]].name} Entrance",
-                rule=lambda state, entry_rule=entry_rule, bosses=bosses, final=(level.key in FINALS and level.key in self.goal_levels): (
-                    entry_rule(state) and state.has_all(bosses, self.player)
+                rule=lambda state, entry_rule=entry_rule, bosses=bosses, final=(
+                    level.key in FINALS and level.key in self.goal_levels
+                ): (
+                    entry_rule(state)
+                    and state.has_all(bosses, self.player)
                     and (not final or self.cortex_requirements_met(state))
                 ),
             )
@@ -534,7 +615,9 @@ class CrashWorld(World):
                 location = CrashLocation(
                     self.player, crate_location(crate), crate["id"], region
                 )
-                location.access_rule = self.location_rule(level, crate_event(crate), crate["id"])
+                location.access_rule = self.location_rule(
+                    level, crate_event(crate), crate["id"]
+                )
                 region.locations.append(location)
             if level.key in self.goal_levels:
                 victory = CrashLocation(
@@ -549,9 +632,9 @@ class CrashWorld(World):
                             if event == "clear"
                         )
                     ]
-                victory.access_rule = lambda state, needed=Counter(needed): state.has_all_counts(
-                    needed, self.player
-                )
+                victory.access_rule = lambda state, needed=Counter(
+                    needed
+                ): state.has_all_counts(needed, self.player)
                 victory.place_locked_item(
                     CrashItem(
                         f"{level.name} Defeated",
@@ -561,13 +644,16 @@ class CrashWorld(World):
                     )
                 )
                 region.locations.append(victory)
-            if (self.victory_goal["type"] == "level_clears" or "level_clears" in self.victory_goal.get("requirements", {})) and level.key.startswith(
-                "L"
-            ):
+            if (
+                self.victory_goal["type"] == "level_clears"
+                or "level_clears" in self.victory_goal.get("requirements", {})
+            ) and level.key.startswith("L"):
                 clear = CrashLocation(
                     self.player, f"{level.name} - Clear Event", None, region
                 )
-                clear.access_rule = self.location_rule(level, "clear", EVENT_IDS[level.key, "clear"])
+                clear.access_rule = self.location_rule(
+                    level, "clear", EVENT_IDS[level.key, "clear"]
+                )
                 clear.place_locked_item(
                     CrashItem(
                         "Level Cleared",
@@ -581,17 +667,30 @@ class CrashWorld(World):
     def create_items(self):
         if self.tracker_slot is not None:
             return
-        starts = Counter(self.lock_requirements(f"{BY_KEY[key].name} - Access" for key in self.starting_levels))
+        starts = Counter(
+            self.lock_requirements(
+                f"{BY_KEY[key].name} - Access" for key in self.starting_levels
+            )
+        )
         starts.update(self.precollected_collectibles.values())
         for name in sorted(starts.elements()):
             self.multiworld.push_precollected(self.create_item(name))
-        required = Counter(self.lock_requirements(f"{level.name} - Access" for level in self.active_levels))
+        required = Counter(
+            self.lock_requirements(
+                f"{level.name} - Access" for level in self.active_levels
+            )
+        )
         for level in self.active_levels:
             for event, _, address in checks(level):
-                if address in self.active_checks or self.local_reward_sources.get(address) in GEMS:
+                if (
+                    address in self.active_checks
+                    or self.local_reward_sources.get(address) in GEMS
+                ):
                     required |= Counter(self.requirements(level, event))
         for crate in self.active_crates:
-            required |= Counter(self.box_requirements(BY_KEY[crate["level"]], crate_event(crate)))
+            required |= Counter(
+                self.box_requirements(BY_KEY[crate["level"]], crate_event(crate))
+            )
         required -= starts
         locked = set(self.locked_collectibles.values())
         local_reward_items = set(self.local_reward_sources.values())
@@ -606,7 +705,7 @@ class CrashWorld(World):
             and name not in locked
             and name not in shuffled
             and name not in local_reward_items
-            and int(name[6]) in self.enabled_campaigns
+            and int(name[6]) in {level.campaign for level in self.active_levels}
         ]
         capacity = len(self.active_checks) - len(self.locked_collectibles)
         progression_count = sum(required.values()) + len(shuffled)
@@ -626,7 +725,9 @@ class CrashWorld(World):
             ):
                 item.classification = ItemClassification.useful
         tokens = 0
-        if self.victory_goal["type"] == "token_hunt" or "token_hunt" in self.victory_goal.get("requirements", {}):
+        if self.victory_goal[
+            "type"
+        ] == "token_hunt" or "token_hunt" in self.victory_goal.get("requirements", {}):
             filler = capacity - len(pool)
             if not filler:
                 raise ValueError(
@@ -635,9 +736,7 @@ class CrashWorld(World):
                     "or select more randomized checks."
                 )
             tokens = (filler * self.options.token_percentage.value + 99) // 100
-            target = (
-                tokens * self.options.token_required_percentage.value + 99
-            ) // 100
+            target = (tokens * self.options.token_required_percentage.value + 99) // 100
             if self.victory_goal["type"] == "token_hunt":
                 self.victory_goal["required"] = target
             else:
@@ -650,17 +749,21 @@ class CrashWorld(World):
         self.multiworld.itempool.extend(pool)
 
     def cortex_requirements_met(self, state):
-        return all(state.has(TOKEN if kind == "token_hunt" else "Level Cleared", self.player, count)
-                   for kind, count in self.victory_goal.get("requirements", {}).items())
+        return all(
+            state.has(
+                TOKEN if kind == "token_hunt" else "Level Cleared", self.player, count
+            )
+            for kind, count in self.victory_goal.get("requirements", {}).items()
+        )
 
     def set_rules(self):
         kind, count = self.victory_goal["type"], self.victory_goal["required"]
         if kind in ("cortex", "all_bosses", "cortex_last", "cortex_requirements"):
-            self.multiworld.completion_condition[self.player] = (
-                lambda state: self.cortex_requirements_met(state) and state.has_all(
-                    tuple(f"{BY_KEY[key].name} Defeated" for key in self.goal_levels),
-                    self.player,
-                )
+            self.multiworld.completion_condition[
+                self.player
+            ] = lambda state: self.cortex_requirements_met(state) and state.has_all(
+                tuple(f"{BY_KEY[key].name} Defeated" for key in self.goal_levels),
+                self.player,
             )
         else:
             self.multiworld.completion_condition[self.player] = lambda state: state.has(
@@ -707,15 +810,25 @@ class CrashWorld(World):
         result["check_requirements"] = {
             address: [
                 ITEMS[name]
-                for name in self.check_requirements(BY_KEY[check["level"]], check["event"])
+                for name in self.check_requirements(
+                    BY_KEY[check["level"]], check["event"]
+                )
             ]
             for address, check in result["checks"].items()
         }
         result["alternate_check_requirements"] = {
             address: [[ITEMS[name] for name in needed] for needed in routes[1:]]
             for address, check in result["checks"].items()
-            if len(routes := check_routes(BY_KEY[check["level"]], check["event"],
-                                         self.level_placements, self.hub_area_locks, self.level_access_locks)) > 1
+            if len(
+                routes := check_routes(
+                    BY_KEY[check["level"]],
+                    check["event"],
+                    self.level_placements,
+                    self.hub_area_locks,
+                    self.level_access_locks,
+                )
+            )
+            > 1
         }
         result["vanilla_collectibles"] = self.vanilla_collectibles
         result["collectible_locations"] = {
@@ -733,13 +846,17 @@ class CrashWorld(World):
                 "event": event,
                 "item": ITEMS[self.local_reward_sources[address]],
                 "requirements": [
-                    ITEMS[name]
-                    for name in self.check_requirements(level, event)
+                    ITEMS[name] for name in self.check_requirements(level, event)
                 ],
                 "alternate_requirements": [
                     [ITEMS[name] for name in needed]
-                    for needed in check_routes(level, event, self.level_placements,
-                                               self.hub_area_locks, self.level_access_locks)[1:]
+                    for needed in check_routes(
+                        level,
+                        event,
+                        self.level_placements,
+                        self.hub_area_locks,
+                        self.level_access_locks,
+                    )[1:]
                 ],
             }
             for level in self.active_levels
