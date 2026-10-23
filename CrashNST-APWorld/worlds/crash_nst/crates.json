@@ -2490,14 +2490,14 @@
     "name": "Crate_ExtraLife003",
     "position_bits": "b071c13e0dcb03479c53c9b6",
     "id": 13518513,
-    "gem_requirements": []
+    "gem_requirements": ["Red"]
   },
   {
     "level": "L112",
     "name": "Crate_ExtraLife004",
     "position_bits": "f071c13e0dcb0347209e9c42",
     "id": 13518514,
-    "gem_requirements": []
+    "gem_requirements": ["Red"]
   },
   {
     "level": "L112",
