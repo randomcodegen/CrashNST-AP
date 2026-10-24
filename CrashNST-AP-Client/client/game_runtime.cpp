@@ -83,13 +83,33 @@ namespace ingame
     namespace
     {
         using namespace engine_memory;
-        FunctionHook hub_bool_hook, hub_int_hook, hub_gate_query_hook, c2_secret_entry_hook;
+        FunctionHook hub_bool_hook, hub_int_hook, hub_gate_query_hook, c2_secret_entry_hook, c2_boss_portal_hook;
         std::atomic<unsigned> hub_areas{0x7fff};
         struct SecretReturn
         {
             Address script = 0, owner = 0, gate = 0, meta = 0;
         };
         std::array<SecretReturn, 5> secret_returns{};
+
+        Address c2_boss_portal_event(Address node, Address context)
+        {
+            const auto instance = value<Address>(context), meta = value<Address>(instance + 56);
+            if (meta >= 16488 && node == meta - 16488 + 24272 && typed(node, 0x13bc390) &&
+                typed(instance, 0x13bbbd0) && typed(meta, 0x1745d78) &&
+                value<unsigned>(meta + 24) == 35 && value<unsigned short>(meta + 90) == 156 &&
+                string(value<Address>(meta + 16)) == "Scripts.Graph.common_C2_Hub_BossPortal")
+            {
+                const auto owner = value<Address>(instance + 24);
+                const auto name = string(value<Address>(owner + 128));
+                constexpr std::array<const char *, 5> bosses{{"B201_RipperRoo_BossLevelPortal",
+                    "B202_KomodoBrothers_BossLevelPortal", "B203_TinyTiger_BossLevelPortal",
+                    "B204_DrNGin_BossLevelPortal", "B205_DrNeoCortex_BossLevelPortal"}};
+                // AP gates own level access. a pending vanilla boss event blocks the rest of the floor.
+                if (typed(owner, 0x14c8ef8) && std::find(bosses.begin(), bosses.end(), name) != bosses.end())
+                    return value<Address>(node + 72);
+            }
+            return reinterpret_cast<Address (*)(Address, Address)>(c2_boss_portal_hook.original)(node, context);
+        }
 
         Address c2_secret_entry_gate(Address node, Address context)
         {
@@ -778,8 +798,10 @@ namespace ingame
         }
         __declspec(noinline) bool request_scripted_death(Address actor)
         {
-            if (!code_matches(0x767da0, std::array<unsigned char, 16>{0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x57, 0x48,
-                                                                      0x83, 0xec, 0x40, 0x48, 0x83, 0x79, 0x10, 0}))
+            const auto native_sender = c2_boss_portal_hook.installed ? c2_boss_portal_hook.original : base() + 0x767da0;
+            std::array<unsigned char, 16> prefix{};
+            if (!read(native_sender, prefix) || prefix != std::array<unsigned char, 16>{0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x57, 0x48,
+                                                                               0x83, 0xec, 0x40, 0x48, 0x83, 0x79, 0x10, 0})
                 throw std::runtime_error("DeathLink script-message sender differs");
             for (const auto component : list(value<Address>(actor + 24), 128))
             {
@@ -804,7 +826,7 @@ namespace ingame
                     // KillEntity leaves this reused actor at zero health so we can't use it :(
                     std::array<Address, 11> sender{base() + 0x13bc390, 0, message, target};
                     std::array<Address, 6> context{component};
-                    reinterpret_cast<Address (*)(Address, Address)>(base() + 0x767da0)(
+                    reinterpret_cast<Address (*)(Address, Address)>(native_sender)(
                         reinterpret_cast<Address>(sender.data()), reinterpret_cast<Address>(context.data()));
                     return true;
                 }
@@ -971,12 +993,14 @@ namespace ingame
             return read(actor + 32, position) && string(value<Address>(actor + 128)) == box.name &&
                    !std::memcmp(position.data(), box.position, sizeof(box.position));
         }
-        const Box *selected_box(const Shared &state, const Box &identity)
+        const Box *selected_box(const std::multimap<std::string, const Box *> &selected, const Box &identity)
         {
-            const auto found = std::find_if(state.boxes, state.boxes + state.box_count, [&](const auto &box)
-                                            { return !std::strcmp(box.level, identity.level) && !std::strcmp(box.name, identity.name) &&
-                                                     !std::memcmp(box.position, identity.position, sizeof(box.position)); });
-            return found == state.boxes + state.box_count ? nullptr : found;
+            const auto range = selected.equal_range(identity.name);
+            for (auto it = range.first; it != range.second; ++it)
+                if (!std::strcmp(it->second->level, identity.level) &&
+                    !std::memcmp(it->second->position, identity.position, sizeof(identity.position)))
+                    return it->second;
+            return nullptr;
         }
         std::vector<Crate> crates(const Shared &state, const std::string &zone)
         {
@@ -989,16 +1013,16 @@ namespace ingame
             static std::vector<Cached> cache;
             static std::string cached_zone;
             static std::uint64_t next_scan = 0;
+            std::multimap<std::string, const Box *> selected;
+            for (unsigned i = 0; i < state.box_count; ++i)
+                if (level == state.boxes[i].level)
+                    selected.emplace(state.boxes[i].name, &state.boxes[i]);
             const auto now = GetTickCount64();
             if (zone != cached_zone || now >= next_scan)
             {
                 cache.clear();
                 cached_zone = zone;
                 next_scan = now + 500;
-                std::multimap<std::string, const Box *> selected;
-                for (unsigned i = 0; i < state.box_count; ++i)
-                    if (level == state.boxes[i].level)
-                        selected.emplace(state.boxes[i].name, &state.boxes[i]);
                 if (selected.empty())
                     return {};
                 const bool flying = level == "L317" || level == "L324" || level == "L330";
@@ -1034,12 +1058,12 @@ namespace ingame
             std::vector<Crate> result;
             for (const auto &c : cache)
             {
-                const auto selected = selected_box(state, c.identity);
-                if (!selected || !crate_identity(c.address, *selected, c.position_owner))
+                const auto box = selected_box(selected, c.identity);
+                if (!box || !crate_identity(c.address, *box, c.position_owner))
                     continue;
                 const auto entity = crate_entity(c.address), model = crate_model(entity);
                 if (entity && model)
-                    result.push_back({c.address, entity, model, *selected});
+                    result.push_back({c.address, entity, model, *box});
             }
             return result;
         }
@@ -1119,21 +1143,36 @@ namespace ingame
         void update_tints(const Shared &state, const std::string &zone)
         {
             std::lock_guard lock(crate_mutex);
+            static std::uint64_t next_update = 0;
+            static std::string updated_zone;
+            static float updated_opacity = 0;
+            const bool enabled = state.visible && state.marker_mode == MarkersTint && state.tint_opacity != 0 && !level_key(zone).empty();
+            const auto now = GetTickCount64();
+            // retained bundles and registered handles survive between refreshes, dont reuse resolved targets!
+            if (enabled && zone == updated_zone && state.tint_opacity == updated_opacity && now < next_update)
+                return;
+            next_update = enabled ? now + 100 : 0;
+            updated_zone = zone;
+            updated_opacity = state.tint_opacity;
+            if (!enabled && tinted_models.empty())
+                return;
             if (!tint_api())
             {
                 restore_tints(false);
                 return;
             }
-            if (!state.visible || state.marker_mode != MarkersTint || state.tint_opacity == 0 || level_key(zone).empty())
+            if (!enabled)
             {
                 restore_tints(true);
                 return;
             }
             const auto targets = crates(state, zone);
+            std::set<std::pair<Address, unsigned>> selected_models;
+            for (const auto &c : targets)
+                selected_models.emplace(c.model, c.identity.color);
             for (auto it = tinted_models.begin(); it != tinted_models.end();)
             {
-                if (!has_tint(*it) || !marker_tint(*it) || it->opacity != state.tint_opacity || std::none_of(targets.begin(), targets.end(), [&](const auto &c)
-                                                                        { return c.model == it->model && c.identity.color == it->color; }))
+                if (!has_tint(*it) || !marker_tint(*it) || it->opacity != state.tint_opacity || !selected_models.count({it->model, it->color}))
                 {
                     clear_tint(*it);
                     release(it->bundle);
@@ -1186,10 +1225,13 @@ namespace ingame
         }
         bool crate_corners(Address model, LiveBox &box)
         {
-            // render model layout: matrix +48, local-space AABB minimum/maximum +112/+128
+            // instance bounds include animation padding. use the mesh's local bounds for outlines so they align properly.
+            const auto mesh = value<Address>(model + 192);
             Matrix transform{};
             std::array<float, 4> minimum{}, maximum{};
-            if (!read(model + 48, transform) || !read(model + 112, minimum) || !read(model + 128, maximum) ||
+            if (!typed(model, 0x1676cb8) || !typed(mesh, 0x1676c18) ||
+                !read(model + 48, transform) || !read(mesh + 32, minimum) || !read(mesh + 48, maximum) ||
+                value<Address>(model + 192) != mesh ||
                 !std::all_of(transform.begin(), transform.end(), [](float f)
                              { return std::isfinite(f); }) ||
                 std::abs(transform[15] - 1) > 0.001f)
@@ -1473,6 +1515,9 @@ namespace ingame
         if ((areas[0] & ~7u) || (areas[1] & ~31u) || (areas[2] & ~31u))
             throw std::runtime_error("Invalid hub area permissions");
         hub_areas.store(areas[0] | (areas[1] << 5) | (areas[2] << 10), std::memory_order_relaxed);
+        c2_boss_portal_hook.attach(0x767da0, {0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x57, 0x48,
+                                           0x83, 0xec, 0x40, 0x48, 0x83, 0x79, 0x10, 0},
+                                   reinterpret_cast<Address>(c2_boss_portal_event));
         // copy each complete leaf function, including its internal short branches and returns.
         hub_bool_hook.attach(0xc9c130, {0x48, 0x8b, 0x41, 0x18, 0x48, 0x85, 0xc0, 0x74, 0x11, 0x48, 0x8b, 0x0a,
                                       0x48, 0x85, 0xc9, 0x74, 0x09, 0x0f, 0xb7, 0x40, 0x18, 0x0f, 0xb6, 0x04,

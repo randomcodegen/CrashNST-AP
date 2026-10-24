@@ -81,6 +81,24 @@ void ClientRuntime::wait_for_commands()
                 break;
         }
         Sleep(10);
+        if (wait % 10 == 9)
+        {
+            // wake quicker during attachment and scene changes. keep steady-state updates at 1 frame
+            if ((session.ready() && !session_failed && (!level_routing || !level_routing->ready())) ||
+                (previous_zone.hub == 1 && !c1_map))
+                break;
+            if (zone_base)
+                try
+                {
+                    if (!(read_active_zone(GetCurrentProcess(), zone_base) == previous_zone))
+                        break;
+                }
+                catch (const std::exception &)
+                {
+                    // the regular update reports errors and handles an unloading scene.
+                    break;
+                }
+        }
     }
 }
 

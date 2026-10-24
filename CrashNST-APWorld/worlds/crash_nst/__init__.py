@@ -68,7 +68,7 @@ class CrashWorld(World):
     item_name_to_id = ITEMS
     location_name_to_id = LOCATIONS
     ut_can_gen_without_yaml = True
-    required_client_version = (1, 0, 5)
+    required_client_version = (1, 0, 6)
 
     def create_item(self, name):
         classification = (

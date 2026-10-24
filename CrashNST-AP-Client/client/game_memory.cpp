@@ -1740,53 +1740,7 @@ C1MapDiscovery find_c1_map(DWORD pid)
             probe_c1_map_at(process.get(), result);
         return result;
     }
-    std::vector<unsigned char> buffer(1 << 20);
-    for (std::uintptr_t address = 0; address < 0x7fff00000000ULL;)
-    {
-        MEMORY_BASIC_INFORMATION region{};
-        if (!VirtualQueryEx(process.get(), reinterpret_cast<void *>(address), &region, sizeof(region)))
-            break;
-        const auto start = reinterpret_cast<std::uintptr_t>(region.BaseAddress), end = start + region.RegionSize;
-        if (end <= address)
-            break;
-        if (readable(region))
-            for (auto pos = start; pos < end; pos += std::min<std::size_t>(buffer.size(), end - pos))
-            {
-                SIZE_T count = 0;
-                const auto length = std::min<std::size_t>(buffer.size(), end - pos);
-                if (!ReadProcessMemory(process.get(), reinterpret_cast<void *>(pos), buffer.data(), length, &count))
-                    continue;
-                for (std::size_t offset = (8 - (pos & 7)) & 7; offset + 144 <= count; offset += 8)
-                {
-                    const auto vt = value<std::uintptr_t>(buffer.data() + offset, 0);
-                    if (vt != base + portal_vtable && vt != base + 0x1745d78)
-                        continue;
-                    std::string name;
-                    try
-                    {
-                        name = metadata_name(process.get(), value<std::uintptr_t>(buffer.data() + offset, vt == base + portal_vtable ? 128 : 16));
-                    }
-                    catch (const std::exception &)
-                    {
-                        continue;
-                    }
-                    auto *slot = vt == base + portal_vtable ? &result.anchor : &result.manager_meta;
-                    if (vt == base + portal_vtable)
-                    {
-                        if (name != anchor.name || !std::equal(anchor.position.begin(), anchor.position.end(), buffer.begin() + offset + 32))
-                            continue;
-                    }
-                    else if (name != "Scripts.Graph.common_Crash1_Hub_Manager")
-                        continue;
-                    if (*slot && *slot != pos + offset)
-                        throw std::runtime_error("Multiple C1 map owners/manager graphs found. Attachment refused");
-                    *slot = pos + offset;
-                }
-            }
-        address = end;
-    }
-    if (result.anchor && result.manager_meta)
-        probe_c1_map_at(process.get(), result);
+    // registries may still be loading,let the caller retry instead of scanning the entire process
     return result;
 }
 
@@ -2043,7 +1997,12 @@ GemRouteProbe probe_gem_route_at(HANDLE process, const std::string &name,
     result.component_size = value<std::uint16_t>(read<104>(process, meta).data(), 90);
     result.meta_name = value<std::uintptr_t>(read<24>(process, meta).data(), 16);
     result.data_name = value<std::uintptr_t>(read<24>(process, result.data_meta).data(), 16);
-    boss_field(process, slab + spec.data_meta, 0, "GemGameVariable", offset, 8,
+    const char *variable_name = "GemGameVariable";
+    if (name == "common_GemDoor")
+        variable_name = "GemGameVariable_id_y92smqbp";
+    else if (name == "Crash2_YellowGemTeleporter_Cover")
+        variable_name = "GemGameVariable_id_t7oqfwq3";
+    boss_field(process, slab + spec.data_meta, 0, variable_name, offset, 8,
                module_base(process) + 0x17a46b8, 0xc423ff);
     const auto current = value<std::uintptr_t>(read<8>(process, result.route).data(), 0);
     if (current != result.original && (!override_route || current != override_route))
@@ -2058,7 +2017,7 @@ GemRouteProbe probe_gem_route_at(HANDLE process, const std::string &name,
         if (value<std::uintptr_t>(read<32>(process, result.effect_accessor).data(), 24) != effect_field ||
             value<std::uintptr_t>(read<104>(process, result.effect_original).data(), 96) != result.effect_accessor)
             throw std::runtime_error("Yellow teleporter effect binding changed");
-        boss_field(process, meta, 0, "SpawnedVFX_metaField_id_siwkjz5j", effect_offset, 8,
+        boss_field(process, meta, 0, "SpawnedVFX_id_5mo4sk3x", effect_offset, 8,
                    module_base(process) + 0x17a46b8, 0xc423ff);
         const auto effect = value<std::uintptr_t>(read<8>(process, result.effect_route).data(), 0);
         if (effect != result.effect_original && (!effect_override || effect != effect_override))
