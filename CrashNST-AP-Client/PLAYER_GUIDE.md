@@ -66,6 +66,7 @@ Press **F2** for unlocked entrances, grouped by physical hub campaign.
 - `token_percentage`: replace 1–100% of the remaining filler slots with AP Tokens (default 20%).
 - `token_required_percentage`: collect 1–100% of those tokens to win (default 80%). 
 - `death_link` is optional and defaults off. Deaths in bonus rounds do not send DeathLink.
+- `/deathlink_amnesty N` skips N local deaths before sending the next DeathLink. Default: `0` (send every death). The setting is saved globally.
 - `crashsanity` is experimental and defaults off.
 
 For a C1 hub with destinations drawn from the whole trilogy:
@@ -84,6 +85,7 @@ Secret-route logic requires **Snow Go's red gem → Air Crash**, **Air Crash's b
 Totally Bear/Fly, Hot Coco and Eggipus Rex require their usual secret paths and the chosen access locks.  
 When a secret route is selected, its source levels are selected with it and count toward `level_count`. If a required source was removed from `level_pool`, that route is skipped instead of adding the source back.  
 The CB3 secret-room elevator opens automatically while AP is active, without relics or touching a level button first. Its level entrances still follow AP access locks.
+Hang 'em High and Future Frenzy's secret entrances keep their native destinations and use that level's Access item, even when its normal entrance is shuffled into another hub.
 
 With Hub Area Locks enabled, each **Crash 1 - Progressive Island Access** opens the next island (two copies total).  
 Each **Crash 2 - Progressive Elevator Access** opens the next warp-room floor (four copies total).  

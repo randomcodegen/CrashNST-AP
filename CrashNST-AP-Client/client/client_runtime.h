@@ -110,6 +110,7 @@ class ClientRuntime
     const std::filesystem::path display_file = standalone::state_directory() / "display.json";
     unsigned box_marker_mode = ingame::MarkersTint;
     bool out_of_logic_markers = false;
+    unsigned deathlink_amnesty = 0, deathlink_skipped = 0;
     std::array<unsigned, 3> hub_label_distances = ingame::default_hub_distances;
     float tint_opacity = ingame::default_tint_opacity;
 

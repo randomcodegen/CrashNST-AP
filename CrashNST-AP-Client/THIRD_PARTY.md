@@ -3,7 +3,7 @@
 The `licenses` directory contains dependency notices.
 
 Corresponding APCpp source and relinking materials are available in
-`CrashNST-AP-Relinking-1.0.6.zip` alongside the client download in the same release.
+`CrashNST-AP-Relinking-1.0.7.zip` alongside the client download in the same release.
 These files are for developers and do not need to be installed to play.
 
 The standalone AP DLL statically links APCpp, its dependencies, liblzma and the MinGW runtime.

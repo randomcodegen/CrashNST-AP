@@ -527,6 +527,8 @@ SECRET_CRATE_EVENTS = frozenset(
 def requirements(level, event):
     """return required items"""
     required = [f"{level.name} - Access"]
+    if (level.key, event) == ("L307", "extra_gem"):
+        return tuple(required)
     if (level.key, event) in SECRET_CHECKS or (level.key, event) in SECRET_CRATE_EVENTS:
         required.extend(requirements(BY_KEY[ALTERNATE_SOURCES[level.key]], "clear"))
     if level.key in SECRET_SOURCES:
@@ -549,6 +551,8 @@ def requirements(level, event):
     if (
         level.campaign == 3
         and level.key not in C3_VEHICLE_LEVELS
+        # Sphynxinator's normal route and sapphire relic do not need the optional shortcut powers.
+        and level.key != "L316"
         and event not in ("clear", "crystal")
     ):
         if level.key.startswith("B"):
@@ -596,6 +600,10 @@ def entry_routes(level, placements, hub_locks, level_locks):
 
 
 def check_routes(level, event, placements, hub_locks, level_locks):
+    if (level.key, event) in (("L307", "extra_gem"), ("L319", "extra_gem")):
+        # fixed secret-room entrances are outside the hub gates, independent of shuffled main entrances.
+        return (tuple(name for name in requirements(level, event)
+                      if level_locks or not name.endswith(" - Access")),)
     normal = lock_requirements(
         requirements(level, event), placements, hub_locks, level_locks
     )

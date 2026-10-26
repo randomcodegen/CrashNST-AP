@@ -92,11 +92,10 @@ void ClientRuntime::update_saves(ClientTick &tick)
     std::set<std::string> completed_levels;
     if (tick.room_ready)
     {
-        auto earned = tick.checked;
         const auto queued = session.pending();
-        earned.insert(queued.begin(), queued.end());
         for (const auto &[key, id] : tick.checks)
-            if (key.second == "clear" && earned.count(id))
+            // server checks can be released, only local events establish a clear.
+            if (key.second == "clear" && queued.count(id))
                 completed_levels.insert(key.first);
         if (tick.online)
             for (const auto id : queued)

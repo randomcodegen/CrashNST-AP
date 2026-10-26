@@ -69,7 +69,7 @@ void ClientRuntime::initialize_ap()
     deferred_receipt_bytes = 0;
     startup_connection.retry(server);
     AP_Init(server.c_str(), "Crash Bandicoot N. Sane Trilogy", slot.c_str(), connection_password.c_str());
-    AP_NetworkVersion client_version{1, 0, 6};
+    AP_NetworkVersion client_version{1, 0, 7};
     AP_SetClientVersion(&client_version);
     AP_EnableQueueItemRecvMsgs(false);
     AP_SetDeathLinkSupported(true);
@@ -131,6 +131,12 @@ int ClientRuntime::initialize()
         if (std::filesystem::exists(display_file))
         {
             const auto config = read_state_json(display_file);
+            if (config.isMember("deathlink_amnesty"))
+            {
+                if (!config["deathlink_amnesty"].isUInt() || config["deathlink_amnesty"].asUInt() > 1000)
+                    throw std::runtime_error("Invalid DeathLink amnesty");
+                deathlink_amnesty = config["deathlink_amnesty"].asUInt();
+            }
             if (config.isMember("box_markers"))
                 box_marker_mode = ingame::box_marker_mode(config["box_markers"].asString());
             if (config.isMember("out_of_logic_markers"))
@@ -164,7 +170,7 @@ int ClientRuntime::initialize()
     }
     catch (const std::exception &e)
     {
-        std::cerr << "Marker settings: " << e.what() << ". Using tint.\n";
+        std::cerr << "Client settings: " << e.what() << ". Keeping valid settings and defaults.\n";
     }
     for (int boss = 1; boss <= 5; ++boss)
         c2_access_levels.push_back("B20" + std::to_string(boss));
@@ -190,7 +196,7 @@ void ClientRuntime::handle_commands()
                     "/server host:port | /port number | /slot name | /password value\n/connect | /disconnect | /status "
                     "| /quit | /markers on/off/toggle | /boxmarkers bounds/tint/off | /outoflogic on/off | /hubdistance 0..100000 | "
                     "/hubdistance_c1 /hubdistance_c2 /hubdistance_c3 0..100000 | /tint_opacity 0..1 | "
-                    "/crashsanity on/off/toggle\nChat and !commands go to the AP server. Tab completes commands and "
+                    "/crashsanity on/off/toggle | /deathlink_amnesty 0..1000\nChat and !commands go to the AP server. Tab completes commands and "
                     "!hint / !hint_location names.\nF1: console | F2: entrances | F7: markers/HUD | F10: vanilla controls");
             else if (command == "/server")
             {
@@ -289,6 +295,22 @@ void ClientRuntime::handle_commands()
             else if (command == "/status")
                 print_console("AP status " + std::to_string(static_cast<int>(AP_GetConnectionStatus())) + " | " +
                               server + " | " + slot);
+            else if (command == "/deathlink_amnesty")
+            {
+                if (!argument.empty())
+                {
+                    const auto amnesty = ingame::deathlink_amnesty(argument);
+                    auto config = std::filesystem::exists(display_file) ? read_state_json(display_file)
+                                                                        : Json::Value(Json::objectValue);
+                    config["deathlink_amnesty"] = amnesty;
+                    std::filesystem::create_directories(display_file.parent_path());
+                    write_state_json(display_file, config);
+                    deathlink_amnesty = amnesty;
+                    deathlink_skipped = 0;
+                }
+                print_console("DeathLink amnesty: " + std::to_string(deathlink_amnesty) +
+                              ". Skip this many local deaths, then send the next. Incoming DeathLinks are unchanged.");
+            }
             else if (command == "/boxmarkers")
             {
                 if (!argument.empty())

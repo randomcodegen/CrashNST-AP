@@ -83,7 +83,7 @@ namespace ingame
     {
         static const std::vector<std::string> names{
             "/help", "/server", "/port", "/slot", "/password", "/connect", "/disconnect", "/status", "/quit",
-            "/crashsanity", "/markers", "/boxmarkers", "/outoflogic", "/hubdistance", "/hubdistance_c1", "/hubdistance_c2", "/hubdistance_c3", "/tint_opacity", "/clear", "!help", "!license", "!options", "!admin", "!players", "!getitem", "!hint", "!hint_location", "!remaining",
+            "/crashsanity", "/markers", "/boxmarkers", "/outoflogic", "/hubdistance", "/hubdistance_c1", "/hubdistance_c2", "/hubdistance_c3", "/tint_opacity", "/deathlink_amnesty", "/clear", "!help", "!license", "!options", "!admin", "!players", "!getitem", "!hint", "!hint_location", "!remaining",
             "!missing", "!checked", "!status", "!release", "!collect", "!countdown", "!alias"};
         return names;
     }
@@ -210,6 +210,14 @@ namespace ingame
         if (end != value.size() || !valid_tint_opacity(opacity))
             throw std::invalid_argument("Use /tint_opacity 0..1");
         return opacity;
+    }
+    unsigned deathlink_amnesty(const std::string &value)
+    {
+        if (value.empty() || value.size() > 4 ||
+            !std::all_of(value.begin(), value.end(), [](unsigned char c) { return c >= '0' && c <= '9'; }) ||
+            std::stoul(value) > 1000)
+            throw std::invalid_argument("Use /deathlink_amnesty 0..1000 (0 sends every death)");
+        return static_cast<unsigned>(std::stoul(value));
     }
     unsigned hub_distance(const std::string &value)
     {

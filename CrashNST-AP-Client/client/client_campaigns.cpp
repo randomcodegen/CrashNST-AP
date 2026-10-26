@@ -183,14 +183,14 @@ C3HubState ClientRuntime::update_c3_gates(ClientTick &tick)
     std::map<std::string, std::uintptr_t> c3_entities;
     if (tick.room_ready)
         for (const auto &[key, gate] : c3_gates)
-            if (!level_locked(*seed, tick.items, key.substr(0, 4), tick.cleared))
+            if (!level_locked(*seed, tick.items, key, tick.cleared))
                 c3_allowed.insert(key);
     if (tick.c3_active)
         for (auto &[key, gate] : c3_gates)
         {
             try
             {
-                // alternate buttons follow their destination's lock settings
+                // secret buttons keep their vanilla destination when ordinary entrances are shuffled
                 bool locked = !c3_allowed.count(key);
                 if (gate->set_locked(locked))
                 {

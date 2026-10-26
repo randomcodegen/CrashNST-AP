@@ -232,6 +232,9 @@ void ClientRuntime::update_display(ClientTick &tick)
             if (!level_locked(*seed, tick.items, portal, tick.cleared))
                 unlocked.insert(portal);
         }
+        for (const auto *destination : {"L307", "L319"})
+            if (!level_locked(*seed, tick.items, std::string(destination) + "-alternate", tick.cleared))
+                unlocked.insert("S" + std::string(destination).substr(1));
         box_markers->progress(progress, tick.placements, unlocked);
     }
     if (tick.room_ready && box_markers)
@@ -266,7 +269,8 @@ void ClientRuntime::update_display(ClientTick &tick)
         const auto deaths = box_markers->deaths();
         if (deaths != last_deaths)
         {
-            if (death_link && tick.online)
+            if (death_link && tick.online && deaths > last_deaths &&
+                ingame::deathlink_due(deathlink_skipped, deathlink_amnesty, deaths - last_deaths))
             {
                 AP_DeathLinkSend();
                 print_console("DeathLink sent.");

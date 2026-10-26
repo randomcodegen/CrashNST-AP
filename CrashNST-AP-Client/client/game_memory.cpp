@@ -1484,13 +1484,13 @@ C3PortalEntryProbe probe_c3_portal_entry_at(HANDLE process, std::uintptr_t butto
         const auto data_meta = value<std::uintptr_t>(read<40>(process, behavior[1]).data(), 32);
         const auto address = boss_field(process, data_meta, behavior[1], "Zone_Info_id_0wfxuf0o", 64, 8, base + 0x17a46b8, 0xc423ff);
         C3PortalDestination destination;
-        destination.key = std::string(spec.key).substr(0, 4);
+        destination.key = spec.key;
         destination.handle = read<48>(process, value<std::uintptr_t>(read<8>(process, address).data(), 0));
         destination.zone = value<std::uintptr_t>(destination.handle.data(), 40);
         if ((value<unsigned>(destination.handle.data(), 0) & 0x30000000) || !destination.zone ||
             value<std::uintptr_t>(read<8>(process, destination.zone).data(), 0) != base + 0x13d0fb0)
             throw std::runtime_error("C3 destination handle is unresolved or has the wrong engine class");
-        auto prefix = (destination.key[0] == 'B' ? "crash3/bosses/" : "crash3/") + destination.key + '_';
+        auto prefix = (destination.key[0] == 'B' ? "crash3/bosses/" : "crash3/") + destination.key.substr(0, 4) + '_';
         for (auto &ch : prefix)
             if (ch >= 'A' && ch <= 'Z')
                 ch += 'a' - 'A';
@@ -3493,7 +3493,7 @@ std::vector<EntranceAnchor> entrance_anchors()
     {
         EntranceAnchor entrance;
         entrance.hub = hub;
-        entrance.level = std::string(key).substr(0, 4);
+        entrance.level = std::strlen(key) > 4 ? "S" + std::string(key).substr(1, 3) : key;
         std::memcpy(entrance.position.data(), bytes.data(), 12);
         result.push_back(entrance);
     };

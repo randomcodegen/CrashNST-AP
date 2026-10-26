@@ -68,7 +68,7 @@ class CrashWorld(World):
     item_name_to_id = ITEMS
     location_name_to_id = LOCATIONS
     ut_can_gen_without_yaml = True
-    required_client_version = (1, 0, 6)
+    required_client_version = (1, 0, 7)
 
     def create_item(self, name):
         classification = (
@@ -572,6 +572,18 @@ class CrashWorld(World):
                     and (not final or self.cortex_requirements_met(state))
                 ),
             )
+            if level.key in ("L307", "L319"):
+                address = EVENT_IDS[level.key, "extra_gem"]
+                if (
+                    self.tracker_slot is None
+                    or address in self.tracker_rules
+                    or str(address) in self.tracker_slot.get("local_reward_sources", {})
+                ):
+                    menu.connect(
+                        region,
+                        name=f"{level.name} Secret Entrance",
+                        rule=self.location_rule(level, "extra_gem", address),
+                    )
             for event, name, address in checks(level):
                 if (
                     address in self.local_reward_sources

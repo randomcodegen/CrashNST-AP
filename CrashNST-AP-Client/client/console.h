@@ -12,6 +12,13 @@ namespace ingame
     const std::vector<std::string> &commands();
     unsigned box_marker_mode(const std::string &name);
     unsigned hub_distance(const std::string &value);
+    unsigned deathlink_amnesty(const std::string &value);
+    inline bool deathlink_due(unsigned &skipped, unsigned amnesty, unsigned deaths)
+    {
+        const auto total = static_cast<std::uint64_t>(skipped) + deaths;
+        skipped = static_cast<unsigned>(total % (amnesty + 1));
+        return total > amnesty;
+    }
     float tint_opacity(const std::string &value);
     const char *box_marker_mode_name(unsigned mode);
     bool valid_server(const std::string &server);

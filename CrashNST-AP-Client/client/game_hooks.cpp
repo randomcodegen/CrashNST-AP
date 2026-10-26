@@ -480,17 +480,22 @@ namespace
         emit({0xff, 0xd0, 0x48, 0x8b, 0xf8, 0x48, 0x85, 0xff});
         done.push_back(branch(0x84));
         emit({0x48, 0x3b, 0xdf});
-        done.push_back(branch(0x84)); // restart/checkpoint retains its destination
+        const auto restart = branch(0x84); // restart/checkpoint retains its destination
         // native secret selectors distinguish the three fixed alternate sections from shuffled hub portals
         if (int_getter)
         {
             emit({0x49, 0x3b, 0x7c, 0x24, 40});
+            const auto c2_hub = branch(0x84);
+            emit({0x49, 0x3b, 0x7c, 0x24, 48});
             std::vector<std::size_t> ordinary{branch(0x85)};
+            bind(c2_hub, c.size());
             emit({0x49, 0x8b, 0x4c, 0x24, 112, 0x48, 0x85, 0xc9});
             ordinary.push_back(branch(0x84));
             emit({0x48, 0xb8}); imm(int_getter);
-            emit({0xff, 0xd0, 0xff, 0xc8, 0x83, 0xf8, 2});
+            emit({0xff, 0xd0, 0xff, 0xc8, 0x83, 0xf8, 8});
             ordinary.push_back(branch(0x87));
+            emit({0x49, 0x3b, 0xbc, 0xc4, 0x80, 0x0c, 0, 0}); // matching hub at state+3200+selector*8
+            ordinary.push_back(branch(0x85));
             emit({0x49, 0x3b, 0x9c, 0xc4, 0x30, 0x0c, 0, 0}); // target at state+3120+selector*8
             ordinary.push_back(branch(0x85));
             emit({0x49, 0x83, 0x7c, 0x24, 8, 0});
@@ -503,6 +508,7 @@ namespace
             emit({0x49, 0x89, 0x9c, 0x24, 144, 0, 0, 0, 0x49, 0x89, 0xbc, 0x24, 152, 0, 0, 0});
             bind(other_campaign, c.size());
             emit({0x49, 0x89, 0x5c, 0x24, 16});
+            emit({0xff, 0xc0, 0x41, 0x89, 0x84, 0x24, 208, 0, 0, 0}); // retain the alternate entrance across Game Over
             done.push_back(jump());
             for (auto at : ordinary) bind(at, c.size());
         }
@@ -605,6 +611,7 @@ namespace
         bind(matched, c.size());
         emit({0x48, 0x3b, 0x79, 16});
         done.push_back(branch(0x85)); // only physical hub entrances are shuffled.
+        emit({0x41, 0xc7, 0x84, 0x24, 208, 0, 0, 0, 0, 0, 0, 0});
         if (setter)
         {
             // route immediately after startup. defer only the optional secret-selector reset.
@@ -623,11 +630,35 @@ namespace
               0x49, 0x89, 0x84, 0x24, 176, 0, 0, 0, // latest ordinary entrance, sampled for local persistence
               0x48, 0x8b, 0x59, 8, 0x49, 0x89, 0x5c, 0x24, 16});
         const auto finish = c.size();
-        for (auto at : done)
-            bind(at, finish);
+        bind(restart, finish);
         bind(returned, finish);
-        bind(secret_allowed, finish);
-        bind(secret_refused, finish);
+        if (setter && int_getter)
+        {
+            // full reload loses the dynamic checkpoint. restore secret-start selector, not coordinates.
+            emit({0x49, 0x3b, 0x7c, 0x24, 16});
+            std::vector<std::size_t> skip{branch(0x85)};
+            emit({0x41, 0x8b, 0x84, 0x24, 208, 0, 0, 0, 0xff, 0xc8, 0x83, 0xf8, 8});
+            skip.push_back(branch(0x87));
+            emit({0x49, 0x3b, 0xbc, 0xc4, 0x30, 0x0c, 0, 0});
+            skip.push_back(branch(0x85));
+            emit({0x48, 0x3b, 0xdf});
+            const auto reload = branch(0x84);
+            emit({0x49, 0x3b, 0x9c, 0xc4, 0x80, 0x0c, 0, 0});
+            skip.push_back(branch(0x85));
+            bind(reload, c.size());
+            emit({0xff, 0xc0, 0x89, 0x44, 0x24, 32, 0x49, 0x8b, 0x4c, 0x24, 112, 0x48, 0x85, 0xc9});
+            skip.push_back(branch(0x84));
+            emit({0x48, 0xb8}); imm(int_getter);
+            emit({0xff, 0xd0, 0x8b, 0x54, 0x24, 32, 0x3b, 0xc2});
+            skip.push_back(branch(0x84));
+            emit({0x49, 0x8b, 0x4c, 0x24, 112, 0x48, 0xb8}); imm(setter);
+            emit({0xff, 0xd0});
+            for (auto at : skip) bind(at, c.size());
+        }
+        for (auto at : done)
+            bind(at, c.size());
+        bind(secret_allowed, c.size());
+        bind(secret_refused, c.size());
         emit({0x48, 0x8b, 0xcb, 0x48, 0x8b, 0xd6, 0x48, 0x83, 0xc4, 40, 0x41, 0x5c, 0x5f, 0x5e, 0x5b, 0x48, 0xb8});
         imm(loader);
         emit({0xff, 0xe0});
@@ -1015,7 +1046,8 @@ LevelRouting::LevelRouting(DWORD pid, const std::map<std::string, std::string> &
             throw std::runtime_error("Entrance routing code exceeds its executable region");
         std::array<unsigned char, 4096> data{};
         // separate RW page: count/enabled at +0/+4, return hub/destination +8/+16, campaign hubs +32/+40/+48
-        // +176 publishes the last ordinary entrance. +184/+192/+200 hold permitted Continue entrances
+        // +176 publishes the last ordinary entrance. +184/+192/+200 hold Continue entrances.
+        // +208 retains an active alternate selector.
         const auto put = [&](unsigned off, std::uintptr_t v)
         { std::memcpy(data.data() + off, &v, 8); };
         unsigned count = 0;
@@ -1060,7 +1092,16 @@ LevelRouting::LevelRouting(DWORD pid, const std::map<std::string, std::string> &
         {
             put(3072 + i * 8, zone_for(c2_secret_entrances[i].second));
             if (i < 3)
+            {
                 put(3120 + i * 8, zone_for(c2_secret_entrances[i].first));
+                put(3200 + i * 8, zone_for("L200"));
+            }
+        }
+        // C3 buttons 27/29 share normal zone objects.
+        for (const auto &[key, selector] : std::array<std::pair<const char *, unsigned>, 2>{{{"L307", 7}, {"L319", 9}}})
+        {
+            put(3120 + (selector - 1) * 8, zone_for(key));
+            put(3200 + (selector - 1) * 8, zone_for("L300"));
         }
         SIZE_T copied = 0;
         if (!WriteProcessMemory(process_, reinterpret_cast<void *>(remote_), code.data(), code.size(), &copied) || copied != code.size() ||
@@ -1912,6 +1953,18 @@ void GemRefreshAccess::detach()
     installed_ = false;
 }
 
+namespace
+{
+    __declspec(noinline) std::set<std::uintptr_t> c3_allowed_zones(const C3PortalEntryProbe &probe,
+                                                                 const std::set<std::string> &allowed)
+    {
+        std::set<std::uintptr_t> zones;
+        for (const auto &destination : probe.destinations)
+            if (allowed.count(destination.key))
+                zones.insert(destination.zone);
+        return zones;
+    }
+}
 C3PortalAccess::C3PortalAccess(DWORD pid, std::uintptr_t button, std::string key)
     : button_(button), key_(std::move(key))
 {
@@ -2004,13 +2057,15 @@ bool C3PortalAccess::update(const std::set<std::string> &allowed)
         if (current.destinations[i].key != before_.destinations[i].key || current.destinations[i].zone != before_.destinations[i].zone)
             throw std::runtime_error("C3 destination objects changed. Rediscovery required");
     }
+    const auto allowed_zones = c3_allowed_zones(current, allowed);
     for (std::size_t i = 0; i < current.destinations.size(); ++i)
     {
         const auto branch = remote_ + i * 256 + 32;
         const auto old = read<std::uintptr_t>(process_, branch);
         if (old && old != before_.original_output)
             throw std::runtime_error("C3 portal entry has an unknown branch");
-        const auto desired = allowed.count(current.destinations[i].key) ? before_.original_output : 0;
+        // poaired buttons share a zone. their individual trigger gates still enforce each entrance's access.
+        const auto desired = allowed_zones.count(current.destinations[i].zone) ? before_.original_output : 0;
         if (old != desired)
             write(process_, branch, old, desired);
     }

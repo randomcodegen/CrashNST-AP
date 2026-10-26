@@ -80,6 +80,8 @@ bool level_locked(const SeedConfig &seed, const std::vector<std::pair<std::int64
                   const std::string &level, const std::set<std::int64_t> &cleared)
 {
     auto source = level.substr(0, 4);
+    if (level == "L307-alternate" || level == "L319-alternate")
+        return !seed.levels.count(source) || (seed.level_access_locks && !has_access(received, source));
     if (source.size() == 4 && source[0] == 'S')
     {
         source[0] = 'L';

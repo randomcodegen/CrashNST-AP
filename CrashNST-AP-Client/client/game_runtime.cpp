@@ -49,6 +49,7 @@ namespace ingame
         key[0] = static_cast<char>(std::toupper(key[0]));
         return key;
     }
+    namespace { bool c3_platform_idle(const C3PlatformProbe &platform); }
     bool initialize_c3_platform(const C3ButtonEventProbe &button, const C3PlatformProbe &platform,
                                 std::pair<std::uintptr_t, std::uintptr_t> &initialized)
     {
@@ -56,9 +57,11 @@ namespace ingame
         if (!button.script || !platform.entities[2])
             throw std::runtime_error("C3 platform script context is unavailable");
         const auto identity = std::make_pair(platform.entities[2], button.script);
-        if (initialized == identity)
+        const bool recover = !platform.active[0] && !platform.active[1] && !platform.active[2] &&
+                             c3_platform_idle(platform);
+        if (initialized == identity && !recover)
             return false;
-        if (platform.active[2])
+        if (platform.active[2] || recover)
         {
             alignas(8) std::array<unsigned char, 72> method{};
             if (button.meta < 42340 || !read(button.meta - 42340 + 51828, method))
@@ -78,7 +81,7 @@ namespace ingame
         if (value<unsigned>(platform.entities[2] + 56) & 0x100)
             return false;
         initialized = identity;
-        return platform.active[2] != 0;
+        return platform.active[2] != 0 || recover;
     }
     namespace
     {
@@ -90,9 +93,12 @@ namespace ingame
             Address script = 0, owner = 0, gate = 0, meta = 0;
         };
         std::array<SecretReturn, 5> secret_returns{};
+        bool vehicle_death_level();
+        void vehicle_death_event(Address node, Address context);
 
         Address c2_boss_portal_event(Address node, Address context)
         {
+            vehicle_death_event(node, context);
             const auto instance = value<Address>(context), meta = value<Address>(instance + 56);
             if (meta >= 16488 && node == meta - 16488 + 24272 && typed(node, 0x13bc390) &&
                 typed(instance, 0x13bbbd0) && typed(meta, 0x1745d78) &&
@@ -447,6 +453,7 @@ namespace ingame
             reinterpret_cast<void (*)(Address, Address, Address)>(movement_check_hook.original)(context, args, outputs);
         }
         Address last_actor = 0;
+        bool last_vehicle_death = false;
         std::atomic_bool remote_death{false};
         std::atomic<Address> death_handle{0};
         std::atomic_uint observed_deaths{0};
@@ -476,7 +483,7 @@ namespace ingame
         }
         void player_died_set(Address variable, unsigned char requested)
         {
-            const bool tracked = variable && variable == bound_player_died() &&
+            const bool tracked = variable && variable == bound_player_died() && !vehicle_death_level() &&
                                  !level_key(string(value<Address>(value<Address>(base() + 0x1a64690) + 184))).empty();
             const auto getter = reinterpret_cast<unsigned char (*)(Address)>(base() + 0x4e5c60);
             const bool before = tracked && getter(variable);
@@ -796,8 +803,111 @@ namespace ingame
                 }
             return false;
         }
+        bool vehicle_death_level()
+        {
+            const auto key = level_key(string(value<Address>(value<Address>(base() + 0x1a64690) + 184)));
+            return key == "L305" || key == "L318" || key == "L326" || key == "L331" ||
+                   key == "L317" || key == "L324" || key == "L330";
+        }
+        __declspec(noinline) Address vehicle_death_component()
+        {
+            Address found = 0;
+            for (const auto owner : event_owners())
+                for (const auto component : list(value<Address>(owner + 24), 128))
+                {
+                    const auto meta = value<Address>(component + 56), data = value<Address>(component + 16);
+                    if (!typed(component, 0x13bbbd0) || value<Address>(component + 24) != owner ||
+                        !(value<unsigned>(component + 32) & 1) || (value<unsigned>(component + 32) & 24) ||
+                        !(value<unsigned char>(component + 40) & 1) || !typed(meta, 0x1745d78) ||
+                        string(value<Address>(meta + 16)) != "Scripts.Graph.Crash_Vehicle_Damage_Manager" ||
+                        value<unsigned>(meta + 24) != 51 || !typed(data, 0x13bbb10))
+                        continue;
+                    if (found && found != component)
+                        return 0;
+                    found = component;
+                }
+            return found;
+        }
+        __declspec(noinline) Address vehicle_death_handle(Address component)
+        {
+            const auto meta = value<Address>(component + 56), data = value<Address>(component + 16);
+            const auto dm = value<Address>(data + 32);
+            if (!typed(component, 0x13bbbd0) || !typed(meta, 0x1745d78) || !typed(data, 0x13bbb10) ||
+                !(value<unsigned>(component + 32) & 1) || (value<unsigned>(component + 32) & 24) ||
+                !(value<unsigned char>(component + 40) & 1) ||
+                string(value<Address>(meta + 16)) != "Scripts.Graph.Crash_Vehicle_Damage_Manager" ||
+                value<unsigned>(meta + 24) != 51 || !typed(dm, 0x1745cc0) || dm != value<Address>(meta + 176) ||
+                string(value<Address>(dm + 16)) != "Scripts.Graph.Crash_Vehicle_Damage_ManagerData" ||
+                value<unsigned>(dm + 24) != 23)
+                return 0;
+            const auto size = value<std::uint16_t>(dm + 90);
+            const auto fields = value<Address>(dm + 40);
+            if (size < 40 || size > 4096 || !fields)
+                return 0;
+            for (unsigned i = 0; i < 23; ++i)
+            {
+                const auto field = value<Address>(fields + i * 8);
+                if (!typed(field, 0x17a46b8) ||
+                    string(value<Address>(field + 48)) != "PlayerDied_id_m8rhvs1z" ||
+                    value<std::uint16_t>(field + 22) != 8)
+                    continue;
+                const auto offset = value<std::uint16_t>(field + 24);
+                if (offset < 40 || offset + 8u > size)
+                    return 0;
+                const auto handle = value<Address>(data + offset), variable = resolve(handle);
+                if ((value<unsigned>(handle) & 0xf0000000) == 0x40000000 &&
+                    string(value<Address>(handle + 8)) == "PlayerDied" &&
+                    string(value<Address>(handle + 24)) == "gamevariables" &&
+                    typed(variable, 0x155ebf0) && value<unsigned>(variable + 16) <= 2)
+                    return handle;
+            }
+            return 0;
+        }
+        void vehicle_death_event(Address node, Address context)
+        {
+            const auto component = value<Address>(context), meta = value<Address>(component + 56);
+            if (meta < 60584 || node != meta - 60584 + 51664 || !typed(node, 0x13bc390) ||
+                !vehicle_death_level() || !bound_player_died() || component != vehicle_death_component())
+                return;
+            const auto message = value<Address>(node + 16);
+            if (!typed(message, 0x17b6578) ||
+                string(value<Address>(message + 16)) != "Crash_DamageManager_c.GraphEvent_id_smxibdqb_Definition")
+                return;
+            // vehicle deaths emit this event without setting the walking character's PlayerDied variable.
+            record_death_change(false, true, false);
+        }
+        __declspec(noinline) bool request_vehicle_death(Address component)
+        {
+            const auto meta = value<Address>(component + 56);
+            const auto handle = vehicle_death_handle(component);
+            if (!component || meta < 60584 || !handle || !bound_player_died() || resolve(handle) != bound_player_died())
+                return false;
+            const auto slab = meta - 60584;
+            // enter the vehicle's lethal-hit branch: it animates rider AND vehicle, then respawns them together.
+            if (!typed(slab + 50680, 0x175dbd8) || !typed(slab + 50936, 0x175dbd8) ||
+                !typed(slab + 51552, 0x175dbd8) || !typed(slab + 51624, 0x175dbd8) ||
+                !typed(slab + 51664, 0x13bc390) || !typed(slab + 62160, 0x17473c8) ||
+                value<Address>(slab + 50680 + 16) != slab + 50720 ||
+                value<Address>(slab + 50680 + 32) != slab + 50936 ||
+                string(value<Address>(slab + 50720 + 24)) != "Ride_Jetski_Death_Mine" ||
+                value<Address>(slab + 51624 + 32) != slab + 51664)
+                return false;
+            alignas(8) std::array<unsigned char, 72> method{};
+            if (!read(slab + 62160, method) || value<Address>(slab + 62160 + 16) != slab + 62184 ||
+                value<unsigned>(slab + 62184 + 16) != 1 || value<unsigned>(slab + 62184 + 20) != 1)
+                return false;
+            const auto address = reinterpret_cast<Address>(method.data());
+            const auto pointer = [&](unsigned offset, Address v) { std::memcpy(method.data() + offset, &v, 8); };
+            pointer(16, address + 24);
+            pointer(56, address + 64);
+            pointer(64, slab + 50680);
+            reinterpret_cast<void (*)(Address, Address, unsigned, Address)>(base() + 0xc988c0)(address, component, 0, 0);
+            return true;
+        }
         __declspec(noinline) bool request_scripted_death(Address actor)
         {
+            if (vehicle_death_level())
+                return request_vehicle_death(vehicle_death_component());
             const auto native_sender = c2_boss_portal_hook.installed ? c2_boss_portal_hook.original : base() + 0x767da0;
             std::array<unsigned char, 16> prefix{};
             if (!read(native_sender, prefix) || prefix != std::array<unsigned char, 16>{0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x57, 0x48,
@@ -833,10 +943,26 @@ namespace ingame
             }
             return false;
         }
-        void bind_player_death(Address actor)
+        __declspec(noinline) void bind_player_death(Address actor)
         {
-            if (actor == last_actor && bound_player_died())
+            const bool vehicle = vehicle_death_level();
+            if (actor == last_actor && vehicle == last_vehicle_death && bound_player_died())
                 return;
+            last_vehicle_death = vehicle;
+            if (vehicle)
+            {
+                if (actor != last_actor)
+                    remote_death = false;
+                last_actor = actor;
+                death_handle = vehicle_death_handle(vehicle_death_component());
+                if (death_handle && bound_player_died())
+                {
+                    if (!code_matches(0x4e5c60, std::array<unsigned char, 5>{0xe9, 0xab, 0xe9, 0xff, 0xff}))
+                        throw std::runtime_error("Game PlayerDied getter differs");
+                    death_hook.attach(0x502000, {0x48, 0x89, 0x5c, 0x24, 8, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x40}, reinterpret_cast<Address>(player_died_set));
+                }
+                return;
+            }
             if (actor != last_actor)
             {
                 last_actor = actor;
@@ -1337,6 +1463,44 @@ namespace ingame
                 return 0;
             return method;
         }
+        bool c3_platform_idle(const C3PlatformProbe &platform)
+        {
+            for (unsigned i = 0; i < 2; ++i)
+            {
+                unsigned movers = 0, spawners = 0;
+                for (const auto component : list(value<Address>(platform.entities[i] + 24), 64))
+                {
+                    if (!typed(component, 0x13bbbd0) || value<Address>(component + 24) != platform.entities[i])
+                        continue;
+                    const auto meta = value<Address>(component + 56);
+                    if (!typed(meta, 0x1745d78))
+                        continue;
+                    const auto name = string(value<Address>(meta + 16));
+                    if (name == "Scripts.Graph.common_Path_Platform_Mover")
+                    {
+                        if (value<std::uint16_t>(meta + 90) != 337 ||
+                            !field_at(meta, "playerOnPlatform_id_96cr4i6a", 64, 1) ||
+                            !field_at(meta, "InternalStore_sliderData_id_mt251ryr", 160, 8) ||
+                            !field_at(meta, "InternalStore_updateNodeUpdater_id_1rl5k748", 224, 8) ||
+                            value<unsigned char>(component + 64) || value<Address>(component + 160) || value<Address>(component + 224))
+                            return false;
+                        ++movers;
+                    }
+                    else if (name == "Scripts.Graph.common_Spawner_Template")
+                    {
+                        if (value<std::uint16_t>(meta + 90) != 344 ||
+                            !field_at(meta, "SpawnedEntity", 232, 8) || !field_at(meta, "used", 67, 1) ||
+                            !field_at(meta, "pendingUsed", 66, 1) || value<Address>(component + 232) ||
+                            value<unsigned char>(component + 67) || value<unsigned char>(component + 66))
+                            return false;
+                        ++spawners;
+                    }
+                }
+                if (movers != 1 || spawners != 1)
+                    return false;
+            }
+            return true;
+        }
         void update_c3_buttons(Shared &state, const std::string &zone)
         {
             static std::uint64_t next = 0, pending_triggers = 0;
@@ -1394,7 +1558,7 @@ namespace ingame
                 bool moved = false, visibility_changed = false;
                 for (const auto component : components)
                 {
-                    if (name == "C3_Hub_Portal_Button01" && initialized_platform.second != component &&
+                    if (name == "C3_Hub_Portal_Button01" &&
                         typed(component, 0x13bbbd0) && value<Address>(component + 24) == entity &&
                         (value<unsigned>(component + 32) & 1) && !(value<unsigned>(component + 32) & 24) &&
                         (value<unsigned char>(component + 40) & 1) &&

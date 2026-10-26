@@ -3,6 +3,7 @@
 #include "function_hook.h"
 #include "engine_memory.h"
 #include <iostream>
+#include <cmath>
 #include <mutex>
 #include <stdexcept>
 #ifdef _MSC_VER
@@ -17,7 +18,44 @@ namespace ingame
         std::vector<Collectible> collectible_config;
         std::map<std::string, unsigned> collectible_earned;
         thread_local bool collectible_grant_active = false;
-        FunctionHook pending_hook, reward_hook, crystal_hook, relic_hook, relic_count_hook, collectible_query_hook;
+        FunctionHook pending_hook, reward_hook, crystal_hook, relic_hook, relic_count_hook, collectible_query_hook, time_trial_hook;
+        using TimeTrialResult = void (*)(int, Address, int *, int *, int *, unsigned char *, unsigned char *,
+                                        unsigned char *, unsigned char *, int *);
+        __declspec(noinline) void completed_time_trial(Address zone, int time)
+        {
+            if (collectible_grant_active || time < 0 || !typed(zone, 0x13d0fb0))
+                return;
+            const auto manager = value<Address>(base() + 0x1a5b690);
+            const auto key = level_key(string(value<Address>(zone + 16)));
+            const auto spec = collectible_spec(key.c_str());
+            const auto world = value<Address>(base() + 0x1a64690);
+            float sapphire = 0;
+            if (resolve(value<Address>(manager + 72)) != zone || !spec || !spec->items[2] ||
+                key != level_key(string(value<Address>(world + 184))) || !read(zone + 0x48, sapphire) ||
+                !std::isfinite(sapphire) || sapphire <= 0 || !std::isfinite(sapphire * 100.0f) ||
+                static_cast<float>(time) > sapphire * 100.0f)
+                return;
+            std::lock_guard lock(collectible_mutex);
+            for (const auto &c : collectible_config)
+                if (key == c.key)
+                {
+                    collectible_earned[key] |= spec->masks[2];
+                    return;
+                }
+        }
+        void time_trial_callback(int time, Address name, int *first, int *second, int *third,
+                                 unsigned char *new_first, unsigned char *new_second, unsigned char *new_third,
+                                 unsigned char *unplaced, int *rank)
+        {
+            const auto key = level_key(string(value<Address>(value<Address>(base() + 0x1a64690) + 184)));
+            reinterpret_cast<TimeTrialResult>(time_trial_hook.original)(
+                time, name, first, second, third, new_first, new_second, new_third, unplaced, rank);
+            // relic awards only run for a new personal best. AP needs any qualifying completed run.
+            const auto manager = value<Address>(base() + 0x1a5b690);
+            const auto zone = resolve(value<Address>(manager + 72));
+            if (level_key(string(value<Address>(zone + 16))) == key)
+                completed_time_trial(zone, time);
+        }
         std::pair<unsigned, unsigned> pickup_query(const std::string &key, unsigned mask)
         {
             std::lock_guard lock(collectible_mutex);
@@ -132,7 +170,7 @@ namespace ingame
             collectible_earned.clear();
         }
         for (auto hook :
-             {&pending_hook, &reward_hook, &crystal_hook, &relic_hook, &relic_count_hook, &collectible_query_hook})
+             {&pending_hook, &reward_hook, &crystal_hook, &relic_hook, &relic_count_hook, &collectible_query_hook, &time_trial_hook})
             try
             {
                 hook->restore();
@@ -226,7 +264,7 @@ namespace ingame
         }
         if (!state.collectible_count)
         {
-            if (pending_hook.installed || reward_hook.installed || crystal_hook.installed)
+            if (pending_hook.installed || reward_hook.installed || crystal_hook.installed || time_trial_hook.installed)
                 restore_collectible_hooks();
             return;
         }
@@ -255,6 +293,9 @@ namespace ingame
         relic_hook.attach(
             0x73c780, {0x41, 0x54, 0x41, 0x55, 0x41, 0x57, 0x48, 0x83, 0xec, 0x30, 0x45, 0x8b, 0xf8, 0x4c, 0x8b, 0xe2},
             reinterpret_cast<Address>(relic_callback));
+        time_trial_hook.attach(0x73cdf0,
+                               {0x48, 0x89, 0x5c, 0x24, 8, 0x4c, 0x89, 0x4c, 0x24, 0x20, 0x4c, 0x89, 0x44, 0x24, 0x18},
+                               reinterpret_cast<Address>(time_trial_callback));
         relic_count_hook.attach(0x75d150,
                                 {0x48, 0x89, 0x5c, 0x24, 8, 0x57, 0x48, 0x83, 0xec, 0x20, 0x8b, 0xfa, 0x8b, 0xd9},
                                 reinterpret_cast<Address>(relic_count_callback));
