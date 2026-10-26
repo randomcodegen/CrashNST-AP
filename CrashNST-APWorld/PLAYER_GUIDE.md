@@ -37,14 +37,16 @@ Useful local commands:
 /hubdistance_c2 250
 /hubdistance_c3 500
 /outoflogic on/off
+/deathlink_amnesty 5
 /disconnect
 /connect
 ```
 
-Markers normally show unchecked selected crates that are in logic. `/outoflogic on` also shows out-of-logic crates. 
-`/tint_opacity` shows the current tint strength.  
-Set it from 0 (no tint) to 1 (full tint), for example `/tint_opacity 0.5` for 50%. The default is 0.75.
-`box_item_spoilers` in the yaml can color markers by item category. Chat and `!` commands go to the AP server.
+Markers normally show unchecked selected crates that are in logic: `/outoflogic on` also shows out-of-logic crates.   
+`/tint_opacity` shows the current tint strength: Set it from 0 (no tint) to 1 (full tint). The default is 0.75.    
+`/deathlink_amnesty X` skips X local deaths before sending the next DeathLink.        
+`box_item_spoilers` in the yaml can color markers by item category.  
+Chat and `!` commands go to the AP server.
 
 When item spoilers are enabled, the client scouts selected locations on connection without creating hints. Item flags are cached per seed and slot for offline play. Boxes use the normal marker color until their flags arrive.
 
@@ -66,7 +68,6 @@ Press **F2** for unlocked entrances, grouped by physical hub campaign.
 - `token_percentage`: replace 1–100% of the remaining filler slots with AP Tokens (default 20%).
 - `token_required_percentage`: collect 1–100% of those tokens to win (default 80%). 
 - `death_link` is optional and defaults off. Deaths in bonus rounds do not send DeathLink.
-- `/deathlink_amnesty N` skips N local deaths before sending the next DeathLink. Default: `0` (send every death). The setting is saved globally.
 - `crashsanity` is experimental and defaults off.
 
 For a C1 hub with destinations drawn from the whole trilogy:
