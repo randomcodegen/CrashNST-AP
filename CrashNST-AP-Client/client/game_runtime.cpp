@@ -692,6 +692,42 @@ namespace ingame
             map_actor = 0;
             next_map_actor = 0;
         }
+        static Address coco_actor = 0;
+        static unsigned coco_campaign = 0;
+        static std::uint64_t next_coco_actor = 0;
+        const auto campaign = hub_campaign(result.zone);
+        if (!actor && (campaign == 2 || campaign == 3))
+        {
+            // switching to hub Coco transfers ownership but leaves the player's Hero handle pointing at Crash
+            const auto players = list(value<Address>(value<Address>(base() + 0x1a665e8) + 16), 12);
+            const auto controlled_coco = [&](Address entity)
+            {
+                const auto owner = resolve(value<Address>(entity + 328));
+                return event_owner(entity) && typed(entity, 0x1592220) &&
+                       (value<unsigned>(entity + 56) & 0x100) && value<unsigned char>(entity + 341) == 1 &&
+                       string(value<Address>(entity + 128)) == "Coco_Character" && owner &&
+                       std::find(players.begin(), players.end(), owner) != players.end();
+            };
+            if (coco_campaign != campaign || GetTickCount64() >= next_coco_actor)
+            {
+                coco_campaign = campaign;
+                coco_actor = 0;
+                next_coco_actor = GetTickCount64() + 250;
+                for (const auto entity : event_owners())
+                    if (controlled_coco(entity))
+                    {
+                        if (coco_actor && coco_actor != entity) { coco_actor = 0; break; }
+                        coco_actor = entity;
+                    }
+            }
+            actor = controlled_coco(coco_actor) ? coco_actor : 0;
+        }
+        else
+        {
+            coco_actor = 0;
+            coco_campaign = 0;
+            next_coco_actor = 0;
+        }
         if (actor)
             result.player_active = read(actor + 32, result.player_position) &&
                                    std::all_of(result.player_position.begin(), result.player_position.end(),
