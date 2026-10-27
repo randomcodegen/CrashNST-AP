@@ -248,8 +248,36 @@ void CloudSaves::receive(const Json::Value &message)
         }
         else if (!acknowledged_.isNull() && !same(value, acknowledged_) && !pending_.isNull())
         {
-            write_state_json(root_ / "cloud-conflict.json", message);
-            throw std::runtime_error("Server state changed while this profile has offline progress. Both copies were retained. Stop NST before resolving the cloud conflict");
+            if (active || value["epoch"] != acknowledged_["epoch"] || value["epoch"] != pending_["epoch"] ||
+                value["generation"].asUInt64() < acknowledged_["generation"].asUInt64())
+            {
+                write_state_json(root_ / "cloud-conflict.json", message);
+                throw std::runtime_error("Server state changed while this profile has offline progress. Both copies were retained. Stop NST before resolving the cloud conflict");
+            }
+            Json::Value backup;
+            backup["acknowledged"] = acknowledged_;
+            backup["pending"] = pending_;
+            backup["server"] = message;
+            const auto path = root_ / ("progress-recovery-" + writer_.substr(0, 16) + ".json");
+            no_reparse(path);
+            write_state_json(path, backup);
+            // same-epoch AP progress only grows: merge collectibles and keep the highest reserved filler index
+            session_.restore_cloud_progress(pending_["progress"]);
+            session_.restore_cloud_progress(value["progress"]);
+            auto merged = value;
+            merged["progress"] = session_.cloud_progress();
+            if (same(merged["progress"], value["progress"]))
+                merged = Json::Value();
+            else
+            {
+                merged["generation"] = Json::UInt64(value["generation"].asUInt64() + 1);
+                merged["writer"] = writer_;
+                validate(merged);
+            }
+            acknowledged_ = value;
+            pending_ = merged;
+            std::cout << "Recovered offline AP progress. Both snapshots retained at " << path.string()
+                      << ". NST save files unchanged.\n" << std::flush;
         }
         else if (!same(value, acknowledged_))
         {

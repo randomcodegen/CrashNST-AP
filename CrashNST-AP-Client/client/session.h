@@ -37,6 +37,7 @@ public:
     int slot() const { return data_["slot"].asInt(); }
     std::set<std::int64_t> pending() const;
     std::set<std::int64_t> checked() const;
+    std::set<std::int64_t> local_clears() const;
     std::vector<std::pair<std::int64_t, int>> items() const;
     std::set<std::int64_t> local_collectibles() const;
     void observe_collectible(std::int64_t location);

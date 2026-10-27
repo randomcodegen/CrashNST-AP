@@ -183,6 +183,15 @@ void Session::open(const std::filesystem::path &directory, const std::string &se
                 throw std::runtime_error("Session identity, schema, or slot data does not match");
             locations(data_["pending"]);
             locations(data_["checked"]);
+            if (!data_.isMember("local_clears"))
+            {
+                data_["local_clears"] = Json::Value(Json::arrayValue);
+                // older clients retained local provenance only while a check was pending
+                for (auto id : pending())
+                    if (data_["slot_data"]["checks"][std::to_string(id)]["event"] == "clear")
+                        data_["local_clears"].append(Json::Int64(id));
+            }
+            local_clears();
             local_collectibles();
             hub_entrances();
             if (!location_flags().isObject() || location_flags().size() > max_checks)
@@ -217,6 +226,7 @@ void Session::open(const std::filesystem::path &directory, const std::string &se
             data_["filler_cursor"] = 0u;
             data_["server_reset_pending"] = false;
             data_["pending"] = data_["checked"] = data_["items"] = Json::Value(Json::arrayValue);
+            data_["local_clears"] = Json::Value(Json::arrayValue);
         }
         dirty_ = true;
         flush();
@@ -352,6 +362,7 @@ void Session::reset_server_state()
     }
     data_["items"] = data_["pending"] = Json::Value(Json::arrayValue);
     data_["local_collectibles"] = Json::Value(Json::arrayValue);
+    data_["local_clears"] = Json::Value(Json::arrayValue);
     data_["bindings"] = Json::Value(Json::objectValue);
     data_.removeMember("hub_entrances");
     data_["filler_cursor"] = 0u;
@@ -371,20 +382,25 @@ std::set<std::int64_t> Session::queue(const std::set<std::int64_t> &incoming)
         throw std::runtime_error("Invalid queued session");
     const auto acknowledged = checked();
     auto values = pending();
+    const auto old_clears = local_clears();
+    auto clears = old_clears;
     std::set<std::int64_t> added;
     for (auto location : incoming)
     {
         if (location <= 0 || !data_["slot_data"]["checks"].isMember(std::to_string(location)))
             throw std::runtime_error("Queued location is absent from this AP room");
+        if (data_["slot_data"]["checks"][std::to_string(location)]["event"] == "clear")
+            clears.insert(location);
         if (!acknowledged.count(location) && values.insert(location).second)
             added.insert(location);
     }
     if (values.size() > max_checks)
         throw std::runtime_error("Too many pending checks");
-    if (added.empty())
+    if (added.empty() && clears == old_clears)
         return added;
     auto previous = data_["pending"];
     data_["pending"] = array(values);
+    data_["local_clears"] = array(clears);
     dirty_ = true;
     try
     {
@@ -393,6 +409,7 @@ std::set<std::int64_t> Session::queue(const std::set<std::int64_t> &incoming)
     catch (...)
     {
         data_["pending"] = std::move(previous);
+        data_["local_clears"] = array(old_clears);
         dirty_ = true;
         throw;
     }
@@ -469,6 +486,16 @@ void Session::observe_collectible(std::int64_t location)
 }
 std::set<std::int64_t> Session::pending() const { return ready() ? locations(data_["pending"]) : std::set<std::int64_t>{}; }
 std::set<std::int64_t> Session::checked() const { return ready() ? locations(data_["checked"]) : std::set<std::int64_t>{}; }
+std::set<std::int64_t> Session::local_clears() const
+{
+    if (!ready())
+        return {};
+    const auto result = locations(data_["local_clears"]);
+    for (auto id : result)
+        if (data_["slot_data"]["checks"][std::to_string(id)]["event"] != "clear")
+            throw std::runtime_error("Invalid locally earned clear");
+    return result;
+}
 std::vector<std::pair<std::int64_t, int>> Session::items() const
 {
     std::vector<std::pair<std::int64_t, int>> result;

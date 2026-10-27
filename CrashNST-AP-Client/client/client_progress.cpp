@@ -93,9 +93,10 @@ void ClientRuntime::update_saves(ClientTick &tick)
     if (tick.room_ready)
     {
         const auto queued = session.pending();
+        const auto local_clears = session.local_clears();
         for (const auto &[key, id] : tick.checks)
             // server checks can be released, only local events establish a clear.
-            if (key.second == "clear" && queued.count(id))
+            if (key.second == "clear" && (queued.count(id) || local_clears.count(id)))
                 completed_levels.insert(key.first);
         if (tick.online)
             for (const auto id : queued)
@@ -171,7 +172,7 @@ void ClientRuntime::update_saves(ClientTick &tick)
                                             }
                                 }
                                 const auto found = tick.checks.find(key);
-                                if (found == tick.checks.end() || tick.checked.count(found->second))
+                                if (found == tick.checks.end() || (key.second != "clear" && tick.checked.count(found->second)))
                                     continue;
                                 // received collectibles also set save bits.
                                 // pickup events alone only award the location

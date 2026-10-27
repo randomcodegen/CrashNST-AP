@@ -94,6 +94,9 @@ Starting entrances fill the earliest selected hub areas first. Any required late
 Crash 3 uses a separate **Hub Section Unlock** for each gated section.  
 Boss defeats do not open hub areas.
 
+Boss and level-clear goals remember your own clears across restarts.  
+Released checks alone do not count as defeats.
+
 Leaving a level returns to the physical entrance used, including shuffled levels in another campaign.
 Continue remembers the last hub entrance used in each campaign for this seed and slot, including cross-campaign shuffled levels.
 
@@ -107,6 +110,9 @@ To disable AP, close NST and remove `dinput8.dll` from the game folder.
 
 Local profiles, connection settings, display settings and runtime logs are under `%LOCALAPPDATA%/CrashNSTAP/state`
 The game-folder loader log is `CrashNSTAP/loader.log`
+
+If a cloud-progress conflict blocks gameplay, close NST and relaunch.  
+If the conflict remains, keep `progress-cache.json`, `cloud-conflict.json` and the session log for diagnosis.
 
 Example: collect tokens and clear levels before fighting Cortex:
 
